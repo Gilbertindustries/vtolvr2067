@@ -1,7 +1,7 @@
 {
   "name": "vtol267",
-  "version": "1.0.0",
-  "description": "",
+  "version": "5.1.0",
+  "description": "VTOL VR 2067 is a flight simulator built on a crappy vibecoded codebase for a school project (IT IS NOT VR)",
   "type": "module",
   "main": "server.js",
   "scripts": {

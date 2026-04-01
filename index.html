@@ -291,8 +291,23 @@ window.addEventListener('keydown', async () => {
         // -------------------------------------------------------------------------
         // Socket.io
         // -------------------------------------------------------------------------
+                let serveraddrdev = "http://tuffblud.tplinkdns.com:3000"
+        let serveraddrprod = "https://vtolvr2067backend.onrender.com"
+                let connectingserver
+
         loadingMsg.innerText = 'Iinitializing network...';
-        const socket = io("http://tuffblud.tplinkdns.com:3000");
+                if (confirm("Dev mode?")) {
+                connectingserver = serveraddrdev   }
+        else {
+            connectingserver = serveraddrprod
+        }
+
+
+
+
+        
+        const socket = io(connectingserver);
+        console.log('Connecting to server at', connectingserver);
 
         socket.on('connect', () => {
             document.getElementById('my-id').innerText = socket.id;
