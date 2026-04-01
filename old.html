@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VTOL VR 2067</title>
+    <style> 
+        body { margin: 0; overflow: hidden; background: #87ceeb; font-family: 'Courier New', monospace; }
+
+        #ui-layer { position: absolute; top: 20px; left: 20px; color: #00ff00; z-index: 10; pointer-events: none; }
+        #setup-box { background: rgba(0, 30, 0, 0.8); padding: 15px; border: 1px solid #00ff00; pointer-events: auto; }
+
+        #hud-bottom { position: absolute; bottom: 20px; left: 20px; color: #00ff00; font-size: 1.2rem; pointer-events: none; }
+
+        #navball-wrapper {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 180px; height: 180px;
+            border-radius: 50%; border: 3px solid #444;
+            background: #111; overflow: hidden;
+        }
+        #plane-icon {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 100; pointer-events: none;
+        }
+
+        #radar-wrapper {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 180px; height: 180px;
+            border-radius: 50%; border: 2px solid #00ff00;
+            background: rgba(0, 20, 0, 0.8); overflow: hidden;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.2);
+        }
+        #radar-canvas { position: absolute; top: 0; left: 0; }
+        #radar-sweep {
+            position: absolute; width: 100%; height: 100%;
+            background: conic-gradient(from 0deg, rgba(0,255,0,0.3) 0%, transparent 10%);
+            animation: sweep 2s linear infinite;
+            border-radius: 50%;
+        }
+        @keyframes sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        input  { background: #001100; border: 1px solid #00ff00; color: #00ff00; padding: 5px; }
+        button { cursor: pointer; background: #00ff00; color: #001100; border: none; padding: 5px 10px; font-weight: bold; }
+        .stat  { margin-bottom: 5px; background: rgba(0,0,0,0.3); padding: 2px 5px; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div id="setup-box">
+            <h1 style="margin:0 0 10px;">VTOL VR* 2067</h1>
+            <div>NETWORK ID: <b id="my-id">---</b></div>
+            <div style="margin-top:10px;">
+                <input type="text" id="join-id" placeholder="Paste Peer ID">
+                <button id="connect-btn">CONNECT</button>
+
+            </div>
+            <div style="font-size:0.7rem; color:#88ff88; margin-top:10px;">
+                W/S: Pitch | Q/E: Roll | A/D: Yaw | SPACE: Boost<br>
+                F / Left Click: Fire | H: Toggle this panel<br>
+                </br>
+                Minimum Apple M1+ / Intel Iris 
+                <br>
+                Not VR. Not affiliated with Boundless Dynamics.
+            </div>
+        </div>
+    </div>
+
+    <div id="hud-bottom">
+        <div class="stat">AIRSPEED: <span id="spd">0</span> KN</div>
+        <div class="stat"> ASL: <span id="alt">0</span> FT</div>
+       <!--<div class="stat">AGL: <span id="agl">0</span> FT</div> #too innacurate-->
+    </div>
+
+    <div id="radar-wrapper">
+        <div id="radar-sweep"></div>
+        <canvas id="radar-canvas" width="180" height="180"></canvas>
+    </div>
+<script type="importmap">
+    { "imports": {
+        "three":          "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/":  "https://unpkg.com/three@0.160.0/examples/jsm/",
+        "peerjs":         "https://esm.sh/peerjs@1.5.2",
+        "three/addons/utils/BufferGeometryUtils.js": "https://unpkg.com/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js"
+    } }
+</script>
+
+    <script type="module">
+
+
+//plane 3d model from sketchfab i think it was from there i dont remember
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { io } from 'https://cdn.socket.io/4.8.1/socket.io.esm.min.js'; // new multiplayer backend
+import * as THREE from 'three';
+import { Sky }  from 'three/addons/objects/Sky.js';
+import { Peer } from 'peerjs';
+import { Water } from 'three/addons/objects/Water.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { PLANE_GLB } from "./scripts/assets.js"; 
+import { devmode, rwater, GRAVITY, DRAG, MAX_SPEED, THRUST_BOOST, BASE_THRUST } from "./scripts/clientconfig.js";       
+import { cloudgen } from "./scripts/cloudgen.js";
+import { radar } from "./scripts/radar.js";
+import { sleep, toggleElement, fpsCounter, loadPlaneModel, tGENmath, colorTerrian, createTargetHighlight , createExplosion} from "./scripts/misc.js";
+import { lEngine } from "./scripts/shaderengine.js";
+import { renderFakeWater } from "./scripts/water.js";
+import { addForest } from "./scripts/trees.js";
+import { gen } from "./scripts/tgen.js";
+let lockedTarget = null; 
+let wkh = 140
+let preformancemode = true
+let velocity = new THREE.Vector3(0, 0, 0);     
+let localPlane  = null;
+let remotePlane = null;
+let terrainSize    = 20000
+let segments       = 256
+let TERRAIN_SCALE  = 1 / 2000
+let TERRAIN_HEIGHT = 150
+let treeamount = 15000
+const _vRadarPos = new THREE.Vector3();
+const _qRadarInv = new THREE.Quaternion();
+const _vForward = new THREE.Vector3(0, 0, -1);
+const _vDir = new THREE.Vector3();
+const _vCamOffset = new THREE.Vector3(0, 3, 12);
+const _vCamGoal = new THREE.Vector3();
+const _vBulletPrev = new THREE.Vector3();
+const scene    = new THREE.Scene();
+const camera   = new THREE.PerspectiveCamera(5, innerWidth / innerHeight, 1, 100000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+fpsCounter(renderer); //fps counter in misc.js
+lEngine(renderer, THREE, scene, Sky); //lighting in shaderengine.js
+radar(remotePlane, localPlane, lockedTarget); //radar in radar.js
+tGENmath(); //noise functions in misc.js
+colorTerrian(THREE); //biome color function in misc.js
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+function tgenold(){
+    //terrianSize = 85000
+     terrainSize    = 40000;
+     //seg = 856
+         segments       = 1556;
+         // 1/5000
+         TERRAIN_SCALE  = 1 / 5000;
+         TERRAIN_HEIGHT = 800;
+}
+function tgen(tS,seg,scale,tH){
+    
+    terrainSize = tS
+    segments = seg
+    TERRAIN_SCALE = scale
+    TERRAIN_HEIGHT = tH
+}
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+preformancemode = false 
+    if (confirm("Performance mode?")) {
+        // OPTION A: User manually chose Performance Mode
+ cloudgen(100,100, THREE, scene)//disable if needed for gaming 
+   tgen(25000,128,1/1000,300)   
+   treeamount = 3000
+        renderFakeWater(50, terrainSize, scene, THREE);
+                    renderer.setSize(200, 200, false); // Tiny internal resolution
+
+        wkh =45
+        // Moderate resolution for performance mode
+            renderer.setSize(500, 500, false); // Tiny internal resolution
+    } else {
+        // OPTION B: User clicked "Cancel" (Check for Low-End Hardware)
+        if (navigator.userAgent.includes('CrOS')) {
+            console.log("Low end hardware detected: Adapting Render Scale.");
+            alert("ChromeOS Detected: Adapting Render Scale");
+            
+            cloudgen(500, 250, THREE, scene); // Drastically reduced clouds for ChromeOS
+//render is set so low because the game needs to run at around 60fps for the logic to work properly
+            renderer.setSize(500, 500, false); // Tiny internal resolution
+        } else {
+          
+        }
+            tgenold();
+            wkh = 150
+            renderFakeWater(160,terrainSize, scene, THREE);
+
+    }
+renderer.domElement.style.width = '100vw';
+renderer.domElement.style.height = '100vh';
+renderer.domElement.style.display = 'block';
+gen(terrainSize, segments, scene, THREE, warpedFbm, biomeColor, TERRAIN_SCALE, TERRAIN_HEIGHT); 
+addForest(treeamount, terrainSize, getTerrainHeight, scene, THREE, mergeGeometries, wkh, )
+loadPlaneModel(0xffffff, true,  500, (m) => { localPlane  = m; }, scene, THREE, GLTFLoader);
+loadPlaneModel(0xff3333, false, 0,   (m) => { remotePlane = m; }, scene, THREE, GLTFLoader);
+
+        // Replace your current `new Peer()` with this:
+let peer = null;
+
+
+
+function peermain() {
+peer = new Peer({
+  config: {
+'iceServers': [
+      { url: 'stun:stun.l.google.com:19302' },
+      { url: 'stun:stun1.l.google.com:19302' },
+      { url: 'stun:stun2.l.google.com:19302' },
+      {url:'turn:openrelay.metered.ca:80', username: 'openrelayproject',credentials: 'openrelayproject'}
+    ]
+  }
+});
+}
+//peermain()
+
+
+        let conn = null;
+        peer.on('open', id => document.getElementById('my-id').innerText = id);
+        peer.on('connection', c => handleConn(c));
+        document.getElementById('connect-btn').onclick = () => handleConn(peer.connect(document.getElementById('join-id').value));
+
+        function handleConn(c) {
+            conn = c;
+            conn.on('open', () => { 
+                remotePlane.visible = true; 
+                document.getElementById('setup-box').style.display = 'none'; 
+            });
+            
+            conn.on('data', d => {
+                if (d.type === 'fire') {
+                    fireBullet(remotePlane);
+                } else {
+                    remotePlane.position.set(d.x, d.y, d.z); 
+                    remotePlane.quaternion.set(d.qx, d.qy, d.qz, d.qw); 
+                }
+            });
+        }
+
+   
+
+        const enemyHighlight = createTargetHighlight(0xff0000, THREE, scene); 
+
+       
+
+        // --- 6. GUN SYSTEM ---
+        const bullets      = [];
+        const BULLET_SPEED = 6;
+        const BULLET_LIFE  = 120;
+        const BULLET_POOL  = 1800;
+        const FIRE_RATE    = 2;
+        let   fireTimer    = 0;   
+
+        const tracerPool = [];
+        for (let i = 0; i < BULLET_POOL; i++) {
+            const geo  = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+            const mat  = new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true });
+            const line = new THREE.Line(geo, mat);
+            line.visible = false;
+            scene.add(line);
+            tracerPool.push({ line, geo });
+        }
+
+        function fireBullet(planeSource) {
+            // Using pre-allocated _vDir instead of instantiating new Vector3 on every shot
+            _vDir.copy(_vForward).applyQuaternion(planeSource.quaternion);
+            const poolIdx  = bullets.length % BULLET_POOL;
+            bullets.push({
+                pos:     planeSource.position.clone().addScaledVector(_vDir, 3), // Clone needed here to store unique position
+                vel:     _vDir.clone().multiplyScalar(BULLET_SPEED),
+                life:    BULLET_LIFE,
+                poolIdx,
+            });
+        }
+
+        // --- 7. FLIGHT LOGIC ---
+        const keys = {};
+        let respawnTimer = 0;
+        window.addEventListener('keydown',   e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keyup',     e => keys[e.key.toLowerCase()] = false);
+        window.addEventListener('mousedown', e => { if (e.button === 0) keys['f'] = true; });
+        window.addEventListener('mouseup',   e => { if (e.button === 0) keys['f'] = false; });
+
+        function update() {
+            const rSpeed = 0.03;
+            camera.rotation.z = THREE.MathUtils.lerp(camera.rotation.z, (keys['a'] ? 0.05 : keys['d'] ? -0.05 : 0), 0.1);
+            // --- 1. ROTATION CONTROLS ---
+            if (keys['w']) localPlane.rotateX(-rSpeed);
+            if (keys['s']) localPlane.rotateX(rSpeed);
+            if (keys['q']) localPlane.rotateZ(rSpeed * 1.5);
+            if (keys['e']) localPlane.rotateZ(-rSpeed * 1.5);
+            if (keys['a']) localPlane.rotateY(rSpeed);
+            if (keys['d']) localPlane.rotateY(-rSpeed);
+            if (keys['h']) {
+                keys['h'] = false; // Prevent rapid toggling
+                toggleElement();
+            }
+
+            // --- 2. AERODYNAMICS & PHYSICS ---
+            _vDir.copy(_vForward).applyQuaternion(localPlane.quaternion); // Avoid 'new Vector3'
+            const currentSpeed = velocity.length();
+
+            const thrustPower = keys[' '] ? THRUST_BOOST : BASE_THRUST;
+            velocity.addScaledVector(_vDir, thrustPower);
+
+            velocity.y -= GRAVITY;
+
+            const airResistance = currentSpeed > 1.0 ? 0.06 : 0.04; 
+            velocity.multiplyScalar(1 - airResistance);
+
+            if (velocity.length() > MAX_SPEED) {
+                velocity.setLength(MAX_SPEED);
+            }
+
+            localPlane.position.add(velocity);
+
+            // --- 3. FIRING ---
+            fireTimer++;
+            if (keys['f'] && fireTimer >= FIRE_RATE) {
+                fireTimer = 0; 
+                fireBullet(localPlane); 
+                if (conn && conn.open) conn.send({ type: 'fire' });
+            }
+
+            // --- 4. BULLET TICK ---
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                _vBulletPrev.copy(b.pos); // Avoid b.pos.clone()
+                b.pos.add(b.vel);
+                b.life--;
+
+                const t = tracerPool[b.poolIdx];
+                const p = t.geo.attributes.position;
+                _vBulletPrev.toArray(p.array, 0);
+                b.pos.toArray(p.array, 3);
+                p.needsUpdate = true;
+                t.line.visible = true;
+                t.line.material.opacity = b.life / BULLET_LIFE;
+
+                const gh = getTerrainHeight(b.pos.x, b.pos.z);
+                const hitGnd = b.pos.y <= gh;
+                const hitPlane = remotePlane.visible && b.pos.distanceTo(remotePlane.position) < 8;
+
+                if (hitGnd || hitPlane || b.life <= 0) {
+                    if (hitGnd || hitPlane) createExplosion(b.pos.clone(), scene, THREE);
+                    t.line.visible = false;
+                    bullets.splice(i, 1);
+                }
+            }
+
+         // --- 5. CRASH LOGIC ---
+if (respawnTimer > 0) {
+    respawnTimer--;
+    if (respawnTimer === 0) {
+        localPlane.position.set(0, 500, 0);
+        localPlane.rotation.set(0, 0, 0);
+        velocity.set(0, 0, 0);
+        localPlane.visible = true;
+    }
+} else {
+    const gh = getTerrainHeight(localPlane.position.x, localPlane.position.z);
+    const waterLevel = wkh + 10;
+    if (localPlane.position.y <= gh + 5 || localPlane.position.y < waterLevel) {
+        createExplosion(localPlane.position.clone(), scene, THREE);
+        localPlane.visible = false;
+        respawnTimer = 180;
+    }
+}
+
+
+
+
+
+// --- 6. TARGET HIGHLIGHT & LOCKING ---
+if (remotePlane && remotePlane.visible ) {
+    enemyHighlight.visible = true;
+    enemyHighlight.position.copy(remotePlane.position);
+    const dist = localPlane.position.distanceTo(remotePlane.position);
+    if (lockedTarget === remotePlane) {
+        enemyHighlight.material.color.setHex(0x00ffff);
+        enemyHighlight.rotateZ(0.1);
+    } else {
+        enemyHighlight.material.color.setHex(0xff0000);
+        enemyHighlight.rotateZ(0.02);
+    }
+    const scale = Math.max(1, dist / 500);
+    enemyHighlight.scale.set(scale, scale, scale);
+} else {
+    enemyHighlight.visible = false;
+}
+
+// --- 7. CAMERA & HUD ---
+if (localPlane.visible) {
+    _vCamGoal.copy(_vCamOffset).applyMatrix4(localPlane.matrixWorld);
+    camera.position.lerp(_vCamGoal, 0.1);
+    camera.lookAt(localPlane.position);
+    const speedEffect = currentSpeed * 0.05;
+    camera.fov = 35+ (speedEffect * 0.5);
+    camera.updateProjectionMatrix();
+} else if (respawnTimer > 0) {
+    camera.position.y += 0.4;
+    camera.lookAt(_vCamGoal);
+}
+
+if (conn && conn.open && localPlane.visible) {
+    conn.send({
+        x: localPlane.position.x, y: localPlane.position.y, z: localPlane.position.z,
+        qx: localPlane.quaternion.x, qy: localPlane.quaternion.y,
+        qz: localPlane.quaternion.z, qw: localPlane.quaternion.w,
+    });
+}
+
+// Inside update(step) function:
+
+const waterLevel = wkh; // Match this to your renderFakeWater(posY) value
+document.getElementById('spd').innerText = Math.round(currentSpeed * 40);
+document.getElementById('alt').innerText = Math.round(localPlane.position.y * 0.8);
+//document.getElementById('agl').innerText = Math.round(getTerrainHeight(localPlane.position.x, localPlane.position.z) * 10);
+//super innacurate
+updateRadar();
+        }
+
+        const clock = new THREE.Clock();
+const fps = 60; // Target FPS
+const interval = 1 / fps;
+let delta = 0;
+
+
+        function animate() {
+            requestAnimationFrame(animate);
+            //water.material.uniforms['time'].value += 1.0 / 60.0;
+          
+               delta += clock.getDelta();
+
+  if (delta > interval) {
+    // The render logic goes here
+
+  update();
+              stats.begin();
+
+    stats.end();
+            // Loop optimized: Using standard for-loop is slightly faster than forEach for 6500 items
+            function cloudgen2(){
+            for(let i = 0, len = clouds.length; i < len; i++) {
+                const c = clouds[i];
+                c.position.x += 0.2;
+                if (c.position.x > CLOUD_SPREAD) c.position.x = -CLOUD_SPREAD;
+            }
+}
+
+
+
+
+/// cloudgen2() 
+            renderer.render(scene, camera);
+    renderer.render(scene, camera);
+    delta %= interval;
+  }
+
+    // monitored code goes here, e.g., rendering a three.js scene
+    // renderer.render( scene, camera );
+
+
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = innerWidth / innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(innerWidth, innerHeight);
+        });
+    </script>
+</body>
+</html>
+
+
+
+

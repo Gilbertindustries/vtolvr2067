@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VTOL VR 2067 — v3.0 Patch Notes</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #0a0f0a; color: #00ff00; font-family: 'Courier New', monospace; min-height: 100vh; display: flex; justify-content: center; padding: 2rem 1rem; }
+        .wrap { max-width: 700px; width: 100%; padding: 1.5rem 0; }
+        .header { margin-bottom: 1.5rem; }
+        .game-title { font-size: 24px; font-weight: 500; letter-spacing: 2px; color: #00ff00; }
+        .version-badge { display: inline-block; font-size: 12px; padding: 3px 10px; border-radius: 6px; background: rgba(0,255,0,0.15); color: #00ff00; border: 1px solid #00ff00; margin-left: 10px; vertical-align: middle; }
+        .subtitle { font-size: 13px; color: #88ff88; margin-top: 6px; }
+        .card { background: rgba(0,30,0,0.6); border: 1px solid #00ff0033; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 10px; }
+        .entry { display: flex; align-items: flex-start; gap: 12px; padding: 8px 0; border-bottom: 1px solid #00ff0022; }
+        .entry:last-child { border-bottom: none; padding-bottom: 0; }
+        .tag { font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 6px; min-width: 90px; text-align: center; flex-shrink: 0; margin-top: 2px; }
+        .tag-new      { background: rgba(0,120,255,0.2); color: #66aaff; border: 1px solid #66aaff44; }
+        .tag-fix      { background: rgba(0,255,0,0.15);  color: #00ff00; border: 1px solid #00ff0044; }
+        .tag-perf     { background: rgba(255,180,0,0.15);color: #ffcc44; border: 1px solid #ffcc4444; }
+        .tag-change   { background: rgba(255,255,255,0.05); color: #aaaaaa; border: 1px solid #aaaaaa33; }
+        .tag-exp      { background: rgba(255,80,80,0.15); color: #ff8888; border: 1px solid #ff888844; }
+        .entry-text { font-size: 14px; color: #ccffcc; line-height: 1.5; }
+        .entry-sub  { font-size: 12px; color: #88ff88; margin-top: 2px; opacity: 0.8; }
+        .section-label { font-size: 11px; font-weight: 500; color: #00ff0077; letter-spacing: 1px; text-transform: uppercase; margin: 1.25rem 0 0.5rem; }
+        .footer { font-size: 12px; color: #00ff0055; margin-top: 1.25rem; border-top: 1px solid #00ff0022; padding-top: 1rem; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="header">
+        <div class="game-title">VTOL VR 2067 <span class="version-badge">v3.0</span></div>
+        <div class="subtitle">Patch notes — what's new since v2</div>
+    </div>
+
+    <div class="section-label">Audio</div>
+    <div class="card">
+        <div class="entry">
+            <span class="tag tag-new">NEW</span>
+            <div><div class="entry-text">Full audio system</div><div class="entry-sub">Engine RPM, afterburner, vulcan cannon, sonic boom, RWR tone, missile launch, splashdown</div></div>
+        </div>
+        <div class="entry">
+            <span class="tag tag-change">SOURCED</span>
+            <div><div class="entry-text">Sounds "borrowed" from BDArmory, Rocket Sound Enhancement & GEO-FS</div></div>
+        </div>
+    </div>
+
+    <div class="section-label">Gameplay</div>
+    <div class="card">
+        <div class="entry">
+            <span class="tag tag-new">NEW</span>
+            <div><div class="entry-text">Missile system with RWR & flares</div><div class="entry-sub">AIM-9 style lock-on, radar warning receiver tone, countermeasure deployment</div></div>
+        </div>
+        <div class="entry">
+            <span class="tag tag-new">NEW</span>
+            <div><div class="entry-text">Mouse controls</div><div class="entry-sub">Pointer lock — mouse steers, left click fires, right click launches missile</div></div>
+        </div>
+        <div class="entry">
+            <span class="tag tag-fix">IMPROVED</span>
+            <div><div class="entry-text">Camera</div><div class="entry-sub">Smooth lerp follow cam, FOV scales with speed</div></div>
+        </div>
+    </div>
+
+    <div class="section-label">Multiplayer</div>
+    <div class="card">
+        <div class="entry">
+            <span class="tag tag-new">NEW</span>
+            <div><div class="entry-text">Socket.IO multiplayer</div><div class="entry-sub">Finally works — PeerJS was broken so this replaced it entirely</div></div>
+        </div>
+    </div>
+
+    <div class="section-label">Rendering & performance</div>
+    <div class="card">
+        <div class="entry">
+            <span class="tag tag-fix">IMPROVED</span>
+            <div><div class="entry-text">Terrain generator</div><div class="entry-sub">Warped FBM noise, biome vertex colors, island mask with fade</div></div>
+        </div>
+        <div class="entry">
+            <span class="tag tag-perf">PERF</span>
+            <div><div class="entry-text">LOD rendering</div><div class="entry-sub">3-level chunk LOD so potato hardware can run this</div></div>
+        </div>
+        <div class="entry">
+            <span class="tag tag-perf">PERF</span>
+            <div><div class="entry-text">Infinite water plane</div><div class="entry-sub">Follows the plane — no need to render a massive real map</div></div>
+        </div>
+        <div class="entry">
+            <span class="tag tag-perf">PERF</span>
+            <div><div class="entry-text">Cloud optimisation</div><div class="entry-sub">Something was done here for performance, details unclear</div></div>
+        </div>
+        <div class="entry">
+            <span class="tag tag-new">NEW</span>
+            <div><div class="entry-text">Loading screen</div></div>
+        </div>
+    </div>
+
+    <div class="section-label">Code</div>
+    <div class="card">
+        <div class="entry">
+            <span class="tag tag-fix">IMPROVED</span>
+            <div><div class="entry-text">Split into ES modules</div><div class="entry-sub">v2 was one giant index.html — now split into tgen, cloudgen, audio, radar, water, trees, etc.</div></div>
+        </div>
+        <div class="entry">
+            <span class="tag tag-exp">EXPERIMENTAL</span>
+            <div><div class="entry-text">cannon-es physics build</div><div class="entry-sub">Works like crap</div></div>
+        </div>
+    </div>
+
+    <div class="footer">VTOL VR 2067 — not affiliated with Boundless Dynamics &nbsp;|&nbsp; presented 10th period</div>
+</div>
+</body>
+</html>`

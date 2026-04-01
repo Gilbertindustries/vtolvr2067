@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VTOL VR 2067</title>
+    <style> 
+        body { margin: 0; overflow: hidden; background: #87ceeb; font-family: 'Courier New', monospace; }
+
+        #ui-layer { position: absolute; top: 20px; left: 20px; color: #00ff00; z-index: 10; pointer-events: none; }
+        #setup-box { background: rgba(0, 30, 0, 0.8); padding: 15px; border: 1px solid #00ff00; pointer-events: auto; }
+
+        #hud-bottom { position: absolute; bottom: 20px; left: 20px; color: #00ff00; font-size: 1.2rem; pointer-events: none; }
+
+        #radar-wrapper {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 180px; height: 180px;
+            border-radius: 50%; border: 2px solid #00ff00;
+            background: rgba(0, 20, 0, 0.8); overflow: hidden;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.2);
+        }
+        #radar-canvas { position: absolute; top: 0; left: 0; }
+        #radar-sweep {
+            position: absolute; width: 100%; height: 100%;
+            background: conic-gradient(from 0deg, rgba(0,255,0,0.3) 0%, transparent 10%);
+            animation: sweep 2s linear infinite;
+            border-radius: 50%;
+        }
+        @keyframes sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        input  { background: #001100; border: 1px solid #00ff00; color: #00ff00; padding: 5px; }
+        button { cursor: pointer; background: #00ff00; color: #001100; border: none; padding: 5px 10px; font-weight: bold; }
+        .stat  { margin-bottom: 5px; background: rgba(0,0,0,0.3); padding: 2px 5px; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div id="setup-box">
+            <h1 style="margin:0 0 10px;">VTOL VR* 2067</h1>
+            <div>NETWORK ID: <b id="my-id">connecting...</b></div>
+            <div style="font-size:0.7rem; color:#88ff88; margin-top:10px;">
+                W/S: Pitch | Q/E: Roll | A/D: Yaw | SPACE: Boost | OR Mouse<br>
+                F / Left Click: Fire | M / Right Click: Missile | C: Flares | H: Toggle this panel<br>
+                <br>
+                Minimum Apple M1+ / Intel Iris<br>
+                Not VR. Not affiliated with Boundless Dynamics.
+            </div>
+        </div>
+    </div>
+    <div id="compass-bar" style="position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: 360px; height: 35px; background: rgba(0, 20, 0, 0.8); border: 2px solid #00ff00; overflow: hidden; color: #00ff00; pointer-events: none; z-index: 10; box-shadow: 0 0 10px rgba(0, 255, 0, 0.1);">
+        <div style="position: absolute; top: 0; left: 50%; transform: translateX(-50%); color: #ff3333; font-weight: bold; font-size: 1.2rem; z-index: 2;">▼</div>
+        <div id="compass-strip" style="position: absolute; top: 12px; left: 0; white-space: nowrap;"></div>
+    </div>
+    <div id="hud-bottom">
+        <div class="stat">AIRSPEED: <span id="spd">0</span> KN</div>
+        <div class="stat">ASL: <span id="alt">0</span> FT</div>
+        <div class="stat">MSL: <span id="msl-status">READY</span></div>
+        <div class="stat">FLARE: <span id="flare-status">READY</span></div>
+    </div>
+
+    <div id="radar-wrapper">
+        <div id="radar-sweep"></div>
+        <canvas id="radar-canvas" width="180" height="180"></canvas>
+    </div>
+
+    <script type="importmap">
+    { "imports": {
+        "three":          "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/":  "https://unpkg.com/three@0.160.0/examples/jsm/",
+        "three/addons/utils/BufferGeometryUtils.js": "https://unpkg.com/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js",
+        "cannon-es":      "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+    } }
+    </script>
+
+    <script type="module">
+
+        import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+        import { io }              from 'https://cdn.socket.io/4.8.1/socket.io.esm.min.js';
+        import * as THREE          from 'three';
+        import * as CANNON         from 'cannon-es'; // PHYSICS ENGINE
+        import { Sky }             from 'three/addons/objects/Sky.js';
+        import { Water }           from 'three/addons/objects/Water.js';
+        import { GLTFLoader }      from 'three/addons/loaders/GLTFLoader.js';
+        import { PLANE_GLB }       from "./scripts/assets.js";
+        import { devmode, rwater, GRAVITY, DRAG, MAX_SPEED, THRUST_BOOST, BASE_THRUST } from "./scripts/clientconfig.js";
+        import { cloudgen }        from "./scripts/cloudgen.js";
+        import { radar, updateRadar } from "./scripts/radar.js";
+        import { sleep, toggleElement, fpsCounter, loadPlaneModel, tGENmath, colorTerrian, createTargetHighlight, createExplosion, isInView, initCompass } from "./scripts/misc.js";
+        import { lEngine }         from "./scripts/shaderengine.js";
+        import { renderFakeWater } from "./scripts/water.js";
+        import { addForest }       from "./scripts/trees.js";
+        import { gen }             from "./scripts/tgen.js";
+        import { fireMissile, updateMissiles, breakLock } from "./scripts/mSystem.js";
+        import { deployFlares, updateFlares, getCooldownFraction, LOCK_BREAK_CHANCE, spawnRemoteFlares } from "./scripts/countermeasures.js";
+        import { initAudio, loadSound, playLoop, stopLoop, playOnce, playDynamicLoop } from './scripts/audio.js';
+
+        // -------------------------------------------------------------------------
+        // Audio — init on first keypress (browser requirement)
+        // -------------------------------------------------------------------------
+        let lockBuffer   = null;
+        let inViewBuffer = null;
+        let lockSource   = null;  
+        let inViewSource = null;  
+        let fireBuffer   = null;
+        let stopBuffer   = null;
+        let crashBuffer  = null;
+        let afterburner  = null; 
+        let normalEngine = null;
+        let normalEngineNode = null;
+        let afterburnerNode  = null;
+        let sonicBuffer  = null;
+        let distSonicBuffer = null;
+        let rwrBuffer    = null;
+
+        window.addEventListener('keydown', async () => {
+            initAudio();
+
+            // Load engine sounds first and start them immediately
+            const [engNormal, engBoost] = await Promise.all([
+                loadSound('./assets/audio/rpm1.mp3'),
+                loadSound('./assets/audio/rpm3.mp3'),
+            ]);
+            normalEngine = engNormal;
+            afterburner  = engBoost;
+            if (!normalEngineNode) normalEngineNode = playDynamicLoop(normalEngine, 0.2);
+            if (!afterburnerNode)  afterburnerNode  = playDynamicLoop(afterburner, 0.0);
+
+            // Load weapon/fx sounds in parallel
+            [lockBuffer, inViewBuffer, fireBuffer, stopBuffer, crashBuffer, sonicBuffer, distSonicBuffer] = await Promise.all([
+                loadSound('./assets/audio/aim9lock.mp3'),
+                loadSound('./assets/audio/aim9idle.mp3'),
+                loadSound('./assets/audio/VulcanCannon.wav'),
+                loadSound('./assets/audio/VulcanEnd.wav'),
+                loadSound('./assets/audio/crash.mp3'),
+                loadSound('./assets/audio/SonicBoom-1.wav'),
+                loadSound('./assets/audio/SonicBoom_Far-1.wav'),
+                loadSound('./assets/audio/fa_18_rwr_combat.mp3'),
+            ]);
+        }, { once: true });
+
+        // -------------------------------------------------------------------------
+        // Socket.io
+        // -------------------------------------------------------------------------
+        const socket = io("http://tuffblud.tplinkdns.com:3000");
+
+        socket.on('connect', () => {
+            document.getElementById('my-id').innerText = socket.id;
+        });
+
+        socket.on('position', (d) => {
+            if (!remotePlane) return;
+            remotePlane.visible = true;
+            remotePlane.position.set(d.x, d.y, d.z);
+            remotePlane.quaternion.set(d.qx, d.qy, d.qz, d.qw);
+        });
+
+        socket.on('machReceive', () => {
+            playOnce(distSonicBuffer, 0.4);
+        });
+
+        socket.on('fire', () => {
+            if (remotePlane) fireBullet(remotePlane);
+        });
+
+        socket.on('playerLeft', () => {
+            if (remotePlane) remotePlane.visible = false;
+        });
+
+        socket.on('launchMissile', (data) => {
+            console.log('Incoming missile!');
+            if (rwrBuffer) playOnce(rwrBuffer, 0.5);
+            const proxy = {
+                position:   new THREE.Vector3(data.px, data.py, data.pz),
+                quaternion: new THREE.Quaternion(data.qx, data.qy, data.qz, data.qw),
+                visible:    true,
+            };
+            fireMissile(proxy, localPlane, scene, true);
+        });
+
+        socket.on('playerHit', () => {
+            console.log('Hit by missile!');
+            if (!localPlane || respawnTimer > 0) return;
+            createExplosion(localPlane.position.clone(), scene, THREE);
+            localPlane.visible = false;
+            respawnTimer = 180;
+        });
+
+        socket.on('flare', (data) => {
+            spawnRemoteFlares(data, scene);
+        });
+
+        // -------------------------------------------------------------------------
+        // Game state
+        // -------------------------------------------------------------------------
+        let lockedTarget   = null;
+        let wkh            = 140;
+        let localPlane     = null;
+        let remotePlane    = null;
+        let terrainSize    = 20000;
+        let segments       = 256;
+        let TERRAIN_SCALE  = 1 / 2000;
+        let TERRAIN_HEIGHT = 150;
+        let treeamount     = 15000;
+        let brokesoundbarrier = false;
+
+        let isFiring     = false;
+        let gunSource    = null; 
+
+        // Pre-allocated vectors
+        const _vForward    = new THREE.Vector3(0, 0, -1);
+        const _vDir        = new THREE.Vector3();
+        const _vCamOffset  = new THREE.Vector3(0, 3, 12);
+        const _vCamGoal    = new THREE.Vector3();
+        const _vBulletPrev = new THREE.Vector3();
+
+        // -------------------------------------------------------------------------
+        // Engine Setup
+        // -------------------------------------------------------------------------
+        const scene    = new THREE.Scene();
+        const camera   = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 100000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+        // Cannon-es World Setup
+        const world = new CANNON.World({
+            gravity: new CANNON.Vec3(0, -9.81, 0),
+        });
+
+        const planeShape = new CANNON.Box(new CANNON.Vec3(2, 1, 3)); 
+        const planeBody = new CANNON.Body({
+            mass: 5000, 
+            position: new CANNON.Vec3(0, 500, 0),
+            shape: planeShape,
+            linearDamping: 0.1,  
+            angularDamping: 0.3 // Keeps turning snappy
+        });
+        world.addBody(planeBody);
+
+        // -------------------------------------------------------------------------
+        // Init modules
+        // -------------------------------------------------------------------------
+        fpsCounter(renderer);
+        lEngine(renderer, THREE, scene, Sky);
+
+        radar((clickedPlane) => {
+            lockedTarget = lockedTarget === clickedPlane ? null : clickedPlane;
+        });
+
+        tGENmath();
+        colorTerrian(THREE);
+        initCompass();
+
+        function tgenold() {
+            terrainSize    = 80000;
+            segments       = 1556;
+            TERRAIN_SCALE  = 1 / 5000;
+            TERRAIN_HEIGHT = 800;
+        }
+        function tgen(tS, seg, scale, tH) {
+            terrainSize    = tS;
+            segments       = seg;
+            TERRAIN_SCALE  = scale;
+            TERRAIN_HEIGHT = tH;
+        }
+
+        if (confirm("Performance mode?")) {
+            cloudgen(100, 100, THREE, scene);
+            tgen(25000, 128, 1 / 1000, 300);
+            treeamount = 3000;
+            renderFakeWater(50, terrainSize, scene, THREE);
+            wkh = 45;
+            renderer.setSize(500, 500, false);
+        } else {
+            if (navigator.userAgent.includes('CrOS')) {
+                console.log("Low end hardware detected: Adapting Render Scale.");
+                alert("ChromeOS Detected: Adapting Render Scale");
+                cloudgen(500, 250, THREE, scene);
+                renderer.setSize(500, 500, false);
+            }
+            tgenold();
+            cloudgen(500, 200, THREE, scene);
+            wkh = 140;
+            renderFakeWater(160, terrainSize, scene, THREE);
+        }
+
+        renderer.domElement.style.width   = '100vw';
+        renderer.domElement.style.height  = '100vh';
+        renderer.domElement.style.display = 'block';
+
+        gen(terrainSize, segments, scene, THREE, warpedFbm, biomeColor, TERRAIN_SCALE, TERRAIN_HEIGHT);
+        addForest(treeamount, terrainSize, getTerrainHeight, scene, THREE, mergeGeometries, wkh);
+        loadPlaneModel(0xffffff, true,  500, (m) => { localPlane  = m; }, scene, THREE, GLTFLoader);
+        loadPlaneModel(0xff3333, false, 0,   (m) => { remotePlane = m; }, scene, THREE, GLTFLoader);
+
+        const enemyHighlight = createTargetHighlight(0xff0000, THREE, scene);
+
+        // -------------------------------------------------------------------------
+        // Gun system
+        // -------------------------------------------------------------------------
+        const bullets      = [];
+        const BULLET_SPEED = 18;
+        const BULLET_LIFE  = 250;
+        const BULLET_POOL  = 1800;
+        const FIRE_RATE    = 3;
+        let   fireTimer    = 0;
+        let   poolCounter  = 0;
+
+        const tracerPool = [];
+        for (let i = 0; i < BULLET_POOL; i++) {
+            const geo  = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+            const mat  = new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true });
+            const line = new THREE.Line(geo, mat);
+            line.visible = false;
+            scene.add(line);
+            tracerPool.push({ line, geo });
+        }
+
+        function fireBullet(planeSource) {
+            _vDir.copy(_vForward).applyQuaternion(planeSource.quaternion);
+            _vDir.x += (Math.random() - 0.5) * 0.012;
+            _vDir.y += (Math.random() - 0.5) * 0.012;
+            _vDir.z += (Math.random() - 0.5) * 0.012;
+            _vDir.normalize();
+
+            const poolIdx = poolCounter % BULLET_POOL;
+            poolCounter++;
+            bullets.push({
+                pos:  planeSource.position.clone().addScaledVector(_vDir, 3),
+                vel:  _vDir.clone().multiplyScalar(BULLET_SPEED),
+                life: BULLET_LIFE,
+                poolIdx,
+            });
+        }
+
+        // -------------------------------------------------------------------------
+        // Input
+        // -------------------------------------------------------------------------
+        const keys = {};
+        let respawnTimer     = 0;
+        let missileTimer     = 0;
+        let mouseDX = 0;
+        let mouseDY = 0;
+
+        window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keyup',   e => keys[e.key.toLowerCase()] = false);
+
+        window.addEventListener('mousedown', e => {
+            if (e.button === 0) keys['f'] = true;
+            if (e.button === 2) keys['m'] = true;
+        });
+        window.addEventListener('mouseup', e => {
+            if (e.button === 0) keys['f'] = false;
+            if (e.button === 2) keys['m'] = false;
+        });
+
+        document.addEventListener('contextmenu', e => e.preventDefault());
+
+        renderer.domElement.addEventListener('click', () => {
+            renderer.domElement.requestPointerLock();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement !== renderer.domElement) return;
+            mouseDX += e.movementX;
+            mouseDY += e.movementY;
+        });
+
+        // -------------------------------------------------------------------------
+        // Target state — checked on interval, not every frame
+        // -------------------------------------------------------------------------
+        let _targetInView  = false;
+        let _targetLocked  = false;
+
+        setInterval(() => {
+            if (!remotePlane || !camera) return;
+            _targetInView = isInView(remotePlane, camera);
+            _targetLocked = lockedTarget === remotePlane;
+
+            if (_targetInView && remotePlane.visible) {
+                if (!inViewSource && inViewBuffer) inViewSource = playLoop(inViewBuffer, 0.2);
+            } else {
+                inViewSource = stopLoop(inViewSource) || null;
+            }
+
+            if (_targetLocked && remotePlane.visible) {
+                if (!lockSource && lockBuffer) lockSource = playLoop(lockBuffer, 0.3);
+            } else {
+                lockSource = stopLoop(lockSource) || null;
+            }
+        }, 150); 
+
+        let playedSonicBoom = false;
+        setInterval(() => {
+            if (!playedSonicBoom && brokesoundbarrier) {
+                if (sonicBuffer) playOnce(sonicBuffer, 0.5);
+                playedSonicBoom = true;
+                socket.emit('mach');
+            }
+        }, 150);
+
+        // -------------------------------------------------------------------------
+        // Update loop
+        // -------------------------------------------------------------------------
+        function update() {
+            if (!localPlane) return; 
+
+            // --- SYNC PHYSICS TO VISUALS ---
+            world.step(1 / 60);
+            localPlane.position.copy(planeBody.position);
+            localPlane.quaternion.copy(planeBody.quaternion);
+
+            // 1. Flight controls (Torque)
+            const PITCH_POWER = 60000;
+            const ROLL_POWER  = 80000;
+            const YAW_POWER   = 25000;
+
+            let pitch = mouseDY * PITCH_POWER * 0.001;
+            let roll  = -mouseDX * ROLL_POWER * 0.001;
+            let yaw   = 0;
+
+            mouseDX = 0; mouseDY = 0;
+
+            if (keys['w']) pitch -= PITCH_POWER;
+            if (keys['s']) pitch += PITCH_POWER;
+            if (keys['a']) yaw   += YAW_POWER;
+            if (keys['d']) yaw   -= YAW_POWER;
+            if (keys['q']) roll  += ROLL_POWER;
+            if (keys['e']) roll  -= ROLL_POWER;
+            
+            if (keys['h']) { keys['h'] = false; toggleElement(); }
+
+            // Convert local torque to world torque and apply
+            const localTorque = new CANNON.Vec3(pitch, yaw, roll);
+            const worldTorque = planeBody.vectorToWorldFrame(localTorque);
+            planeBody.applyTorque(worldTorque);
+
+            // 2. Physics & Aerodynamics (Force)
+            _vDir.copy(_vForward).applyQuaternion(localPlane.quaternion);
+            const localVelocity = planeBody.vectorToLocalFrame(planeBody.velocity);
+
+            // Wing Grip (Snap into turns instantly)
+            const gripForceX = -localVelocity.x * 5000; 
+            const gripForceY = -localVelocity.y * 5000; 
+            planeBody.applyLocalForce(new CANNON.Vec3(gripForceX, gripForceY, 0), new CANNON.Vec3(0,0,0));
+
+            // Thrust - ABSOLUTE ROCKET SPEED
+            const thrustPower = keys[' '] ? 15000000 : 4000000; 
+            planeBody.applyLocalForce(new CANNON.Vec3(0, 0, -thrustPower), new CANNON.Vec3(0,0,0));
+
+            // Lift
+            const forwardSpeed = Math.max(0, -localVelocity.z); 
+            const planeWeight = 49050; // Mass (5000) * Gravity (9.81)
+            const liftRatio = Math.min(forwardSpeed / 200, 1.4); 
+            const liftForce = planeWeight * liftRatio;
+            planeBody.applyLocalForce(new CANNON.Vec3(0, liftForce, 0), new CANNON.Vec3(0,0,0));
+
+            // Air Resistance (Terminal Velocity)
+            const dragForceAmount = forwardSpeed * 1000; 
+            planeBody.applyLocalForce(new CANNON.Vec3(0, 0, dragForceAmount), new CANNON.Vec3(0,0,0)); 
+
+            const currentSpeed = forwardSpeed;
+
+            // --- COMPASS UI ---
+            const headingRad = Math.atan2(_vDir.x, -_vDir.z); 
+            const headingDeg = headingRad * (180 / Math.PI);
+            const headingFinal = (headingDeg % 360 + 360) % 360;
+
+            const offset = -570 - (headingFinal * 2);
+            document.getElementById('compass-strip').style.transform = `translateX(${offset}px)`;
+
+            // --- AUDIO CROSSFADING ---
+            if (normalEngineNode && afterburnerNode) {
+                const targetNormalVol = keys[' '] ? 0.0 : 0.2;
+                const targetBoostVol  = keys[' '] ? 0.4 : 0.0;
+                normalEngineNode.gain.gain.value += (targetNormalVol - normalEngineNode.gain.gain.value) * 0.1;
+                afterburnerNode.gain.gain.value  += (targetBoostVol - afterburnerNode.gain.gain.value) * 0.1;
+            }
+
+            // 3. Gun firing
+            fireTimer++;
+            if (keys['f'] && fireTimer >= FIRE_RATE) {
+                fireTimer = 0;
+                fireBullet(localPlane);
+                socket.emit('fire', {
+                    x:  localPlane.position.x, y:  localPlane.position.y, z:  localPlane.position.z,
+                    qx: localPlane.quaternion.x, qy: localPlane.quaternion.y,
+                    qz: localPlane.quaternion.z, qw: localPlane.quaternion.w,
+                });
+
+                if (!isFiring) {
+                    isFiring  = true;
+                    if (fireBuffer) gunSource = playLoop(fireBuffer, 0.3);
+                }
+            } else if (isFiring && !keys['f']) {
+                isFiring = false;
+                if (gunSource) { stopLoop(gunSource); gunSource = null; }
+                if (stopBuffer) playOnce(stopBuffer, 0.3);
+            }
+
+            // 4. Bullet tick
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                _vBulletPrev.copy(b.pos);
+                b.pos.add(b.vel);
+                b.life--;
+
+                const t = tracerPool[b.poolIdx];
+                const p = t.geo.attributes.position;
+                _vBulletPrev.toArray(p.array, 0);
+                b.pos.toArray(p.array, 3);
+                p.needsUpdate           = true;
+                t.line.visible          = true;
+                t.line.material.opacity = b.life / BULLET_LIFE;
+
+                const gh       = getTerrainHeight(b.pos.x, b.pos.z);
+                const hitGnd   = b.pos.y <= gh;
+                const hitPlane = remotePlane && remotePlane.visible &&
+                                 b.pos.distanceTo(remotePlane.position) < 8;
+
+                if (hitGnd || hitPlane || b.life <= 0) {
+                    if (hitGnd || hitPlane) createExplosion(b.pos.clone(), scene, THREE);
+                    t.line.visible = false;
+                    bullets.splice(i, 1);
+                }
+            }
+
+            // 5. Crash / respawn logic
+            if (respawnTimer > 0) {
+                respawnTimer--;
+                if (respawnTimer === 0) {
+                    planeBody.position.set(0, 500, 0);
+                    planeBody.velocity.set(0, 0, 0);
+                    planeBody.angularVelocity.set(0, 0, 0);
+                    planeBody.quaternion.setFromEuler(0, 0, 0);
+                    
+                    localPlane.visible = true;
+                    if (normalEngineNode) { normalEngineNode.gain.gain.value = 0.2; }
+                }
+            } else {
+                const gh = getTerrainHeight(localPlane.position.x, localPlane.position.z);
+                if (localPlane.position.y <= gh + 5 || localPlane.position.y < wkh + 10) {
+                    createExplosion(localPlane.position.clone(), scene, THREE);
+                    if (crashBuffer) playOnce(crashBuffer, 0.4);
+                    if (normalEngineNode) { normalEngineNode.gain.gain.value = 0; }
+                    if (afterburnerNode)  { afterburnerNode.gain.gain.value  = 0; }
+                    localPlane.visible = false;
+                    respawnTimer = 180;
+                }
+            }
+
+            // 6. Target highlight
+            if (remotePlane && remotePlane.visible) {
+                enemyHighlight.visible = true;
+                enemyHighlight.position.copy(remotePlane.position);
+                const dist = localPlane.position.distanceTo(remotePlane.position);
+
+                if (lockedTarget === remotePlane) {
+                    enemyHighlight.material.color.setHex(0x00ffff);
+                    enemyHighlight.rotateZ(0.1);
+                } else {
+                    enemyHighlight.material.color.setHex(0xff0000);
+                    enemyHighlight.rotateZ(0.02);
+                }
+
+                const scale = Math.max(1, dist / 500);
+                enemyHighlight.scale.set(scale, scale, scale);
+            } else {
+                enemyHighlight.visible = false;
+                inViewSource = stopLoop(inViewSource) || null;
+                lockSource   = stopLoop(lockSource)   || null;
+            }
+
+            // 7. Camera & HUD
+            if (localPlane.visible) {
+                _vCamGoal.copy(_vCamOffset).applyMatrix4(localPlane.matrixWorld);
+                camera.position.lerp(_vCamGoal, 0.1);
+                camera.lookAt(localPlane.position);
+                
+                // Cap the FOV at 110 degrees maximum
+                camera.fov = Math.min(110, 60 + (currentSpeed * 0.005));
+                camera.updateProjectionMatrix();
+            } else if (respawnTimer > 0) {
+                camera.position.y += 0.4;
+                camera.lookAt(_vCamGoal);
+            }
+
+            // 8. Position broadcast
+            if (localPlane.visible) {
+                socket.emit('position', {
+                    x:  localPlane.position.x,  y:  localPlane.position.y,  z:  localPlane.position.z,
+                    qx: localPlane.quaternion.x, qy: localPlane.quaternion.y,
+                    qz: localPlane.quaternion.z, qw: localPlane.quaternion.w,
+                });
+            }
+
+            document.getElementById('spd').innerText = Math.round(currentSpeed * 0.5);
+            document.getElementById('alt').innerText = Math.round(localPlane.position.y * 0.8);
+            
+            const knots = currentSpeed * 0.5;
+
+            if (brokesoundbarrier === false && knots > 666) {
+                brokesoundbarrier = true;
+            }
+            if (brokesoundbarrier && knots < 666) {
+                brokesoundbarrier = false;
+                playedSonicBoom = false; 
+            }
+
+            // 9. Missile firing
+            missileTimer++;
+            const MSL_COOLDOWN = 480;
+            if (keys['m'] && missileTimer >= MSL_COOLDOWN && localPlane.visible) {
+                const target = lockedTarget || null;
+                if (!target) {
+                    document.getElementById('msl-status').innerText = 'NO LOCK';
+                } else if (!_targetInView) {
+                    document.getElementById('msl-status').innerText = 'NO VISUAL';
+                } else {
+                    missileTimer = 0;
+                    fireMissile(localPlane, target, scene, false);
+                    socket.emit('launchMissile', {
+                        px: localPlane.position.x,
+                        py: localPlane.position.y,
+                        pz: localPlane.position.z,
+                        qx: localPlane.quaternion.x,
+                        qy: localPlane.quaternion.y,
+                        qz: localPlane.quaternion.z,
+                        qw: localPlane.quaternion.w,
+                        targetId: socket.id,
+                    });
+                }
+            }
+
+            const mslReady = missileTimer >= MSL_COOLDOWN;
+            if (!keys['m'] || mslReady) {
+                document.getElementById('msl-status').innerText = mslReady
+                    ? 'READY'
+                    : `${Math.ceil((MSL_COOLDOWN - missileTimer) / 60 * 10) / 10}s`;
+            }
+
+            // 10. Missile physics tick
+            updateMissiles(scene, remotePlane, getTerrainHeight, createExplosion, socket);
+
+            // 11. Countermeasures
+            if (keys['c']) {
+                const fired = deployFlares(localPlane, scene, socket);
+                if (fired) breakLock(localPlane, LOCK_BREAK_CHANCE);
+            }
+            updateFlares(scene);
+
+            // Flare HUD
+            const frac = getCooldownFraction();
+            document.getElementById('flare-status').innerText =
+                frac >= 1 ? 'READY' : `${Math.round(frac * 100)}%`;
+
+            // 12. Radar
+            updateRadar(localPlane, remotePlane, lockedTarget);
+        }
+
+        // -------------------------------------------------------------------------
+        // Render loop
+        // -------------------------------------------------------------------------
+        const clock    = new THREE.Clock();
+        const fps      = 60;
+        const interval = 1 / fps;
+        let delta      = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            delta += clock.getDelta();
+            if (delta > interval) {
+                update();
+                stats.begin();
+                stats.end();
+                renderer.render(scene, camera);
+                delta %= interval;
+            }
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = innerWidth / innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(innerWidth, innerHeight);
+        });
+
+    </script>
+</body>
+</html>

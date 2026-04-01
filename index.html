@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VTOL VR 2067</title>
+    <style> 
+        body { margin: 0; overflow: hidden; background: #87ceeb; font-family: 'Courier New', monospace; }
+
+        #ui-layer { position: absolute; top: 20px; left: 20px; color: #00ff00; z-index: 10; pointer-events: none; }
+        #setup-box { background: rgba(0, 30, 0, 0.8); padding: 15px; border: 1px solid #00ff00; pointer-events: auto; }
+
+        #hud-bottom { position: absolute; bottom: 20px; left: 20px; color: #00ff00; font-size: 1.2rem; pointer-events: none; }
+
+        #radar-wrapper {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 180px; height: 180px;
+            border-radius: 50%; border: 2px solid #00ff00;
+            background: rgba(0, 20, 0, 0.8); overflow: hidden;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.2);
+        }
+        #radar-canvas { position: absolute; top: 0; left: 0; }
+        #radar-sweep {
+            position: absolute; width: 100%; height: 100%;
+            background: conic-gradient(from 0deg, rgba(0,255,0,0.3) 0%, transparent 10%);
+            animation: sweep 2s linear infinite;
+            border-radius: 50%;
+        }
+        @keyframes sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        input  { background: #001100; border: 1px solid #00ff00; color: #00ff00; padding: 5px; }
+        button { cursor: pointer; background: #00ff00; color: #001100; border: none; padding: 5px 10px; font-weight: bold; }
+        .stat  { margin-bottom: 5px; background: rgba(0,0,0,0.3); padding: 2px 5px; }
+        /*
+Source - https://stackoverflow.com/a/1216486
+Posted by Macha, modified by community. See post 'Timeline' for change history
+Retrieved 2026-04-01, License - CC BY-SA 2.5
+*/
+
+#images-container {
+    position:relative;
+}
+#big-image {
+    position:absolute; /* position:absolute aligns to the parent container
+                          which in the HTML above is the <div> element */
+    bottom:0;
+    left:0;
+    z-index:0;
+}
+#small-image {
+    position:absolute;
+    bottom:0;
+    left:0;
+    z-index:1;
+}
+.bottom-left-info {
+    position: absolute;
+    bottom: 20px; /* Pushes it slightly off the exact bottom edge */
+    left: 20px;   /* Pushes it slightly off the exact left edge */
+    display: flex;
+    align-items: center; /* Vertically centers the text with the image */
+    gap: 10px; /* Adds space between the image and text */
+    font-size: 0.8rem;
+    color: #00ff00;
+}
+
+.bottom-left-info img {
+    height: 80px; /* Forces the image to be a reasonable UI size */
+    width: auto;
+    border-radius: 4px; /* Optional: smooths the corners of the image */
+}
+
+#pitch-strip {
+    position: absolute; 
+    left: 0; 
+    width: 100%; 
+    top: 50%; 
+    /* margin-top: -110px;  <-- DELETE THIS LINE */
+    display: flex; 
+    flex-direction: column; 
+    align-items: center; 
+    transition: transform 0.05s linear;
+}
+    </style>
+</head>
+<body>
+<div id="loading-screen" style="
+    position: fixed; inset: 0; background: #000d00;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 9999; color: #00ff00; font-family: 'Courier New', monospace;
+">
+    <div style="font-size: 2rem; margin-bottom: 10px;">VTOL VR 2067</div>
+    <div id="loading-msg" style="font-size: 1rem; opacity: 0.7;">INITIALIZING...</div>
+
+    <div class="bottom-left-info">
+        <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQNzjRIDpyx7Ntz0fCjgo2bwA0YCZnzNw_UuQ&s" alt="ThreeJS">
+        <span style="color: white; font-style: bold;">THREE.JS r183.0 </br> GAME V5.1.0 </span>
+    </div>
+</div>
+</div>
+    <div id="ui-layer">
+        <div id="setup-box">
+            <h1 style="margin:0 0 10px;">VTOL VR* 2067</h1>
+            <div>NETWORK ID: <b id="my-id">connecting...</b></div>
+            <div style="font-size:0.7rem; color:#88ff88; margin-top:10px;">
+                W/S: Pitch |  A/D: Roll | SPACE: Boost | OR Mouse<br>
+                F / Left Click: Fire | M / Right Click: Missile | C: Flares | H: Toggle this panel<br>
+                <br>
+                Minimum Apple M1+ / Intel Iris XE (Not UHD)<br>
+                Not VR. Not affiliated with Boundless Dynamics.
+            </div>
+            <button onclick="patchnotes()">PATCH NOTES</button>
+        </div>
+    </div>
+<div id="compass-bar" style="position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: 360px; height: 35px; background: rgba(0, 20, 0, 0.8); border: 2px solid #00ff00; overflow: hidden; color: #00ff00; pointer-events: none; z-index: 10; box-shadow: 0 0 10px rgba(0, 255, 0, 0.1);">
+    <div style="position: absolute; top: 0; left: 50%; transform: translateX(-50%); color: #ff3333; font-weight: bold; font-size: 1.2rem; z-index: 2;">▼</div>
+    
+    <div id="compass-strip" style="position: absolute; top: 12px; left: 0; white-space: nowrap;"></div>
+
+    <div id="enemy-marker" style="position: absolute; top: 5px; color: #ffd900; font-weight: bold; display: none; z-index: 5; font-size: 1rem;">▼</div>
+</div>
+    <div id="hud-bottom">
+        <div class="stat">AIRSPEED: <span id="spd">0</span> KN</div>
+        <div class="stat">ASL: <span id="alt">0</span> FT</div>
+        <div class="stat">MSL: <span id="msl-status">READY</span></div>
+        <div class="stat">FLARE: <span id="flare-status">READY</span></div>
+    </div>
+<div id="out-of-bounds-warning" style="position: absolute; top: 25%; left: 50%; transform: translate(-50%, -50%); color: #ff0000; font-size: 3rem; font-weight: bold; text-align: center; text-shadow: 2px 2px 4px black, 0 0 10px red; z-index: 100; display: none; pointer-events: none; font-family: 'Courier New', monospace;">
+        RETURN TO BATTLEFIELD<br>
+        <span id="oob-timer">10.0</span>
+    </div>
+    <div id="gun-reticle" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 15;">
+        
+        <div style="position: absolute; top: -20px; left: -20px; width: 40px; height: 40px; border: 2px solid rgba(0, 255, 0, 0.6); border-radius: 50%; box-shadow: 0 0 8px rgba(0, 255, 0, 0.5); box-sizing: border-box;"></div>
+        
+        <div style="position: absolute; top: -2px; left: -2px; width: 4px; height: 4px; background: #00ff00; border-radius: 50%; box-shadow: 0 0 8px #00ff00;"></div>
+        
+        <div style="position: absolute; top: -28px; left: -1px; width: 2px; height: 8px; background: #00ff00; box-shadow: 0 0 5px #00ff00;"></div>
+        
+        <div style="position: absolute; top: 20px; left: -1px; width: 2px; height: 8px; background: #00ff00; box-shadow: 0 0 5px #00ff00;"></div>
+        
+        <div style="position: absolute; top: -1px; left: -28px; width: 8px; height: 2px; background: #00ff00; box-shadow: 0 0 5px #00ff00;"></div>
+        
+        <div style="position: absolute; top: -1px; left: 20px; width: 8px; height: 2px; background: #00ff00; box-shadow: 0 0 5px #00ff00;"></div>
+        
+    </div>
+    <div id="angle-bar" style="position: absolute; top: 50%; right: 20px; transform: translateY(-50%); width: 35px; height: 200px; background: rgba(0, 20, 0, 0.8); border: 2px solid #00ff00; overflow: hidden; color: #00ff00; pointer-events: none; z-index: 10; box-shadow: 0 0 10px rgba(0, 255, 0, 0.1);">
+    <div style="position: absolute; top: 50%; right: 0; transform: translateY(-50%); color: #ff3333; font-weight: bold; font-size: 1.2rem; z-index: 2;">◀</div>
+    
+   <div id="pitch-strip" style="position: absolute; left: 0; width: 100%; top: 50%; margin-top: -110px; display: flex; flex-direction: column; align-items: center; transition: transform 0.05s linear;">
+    <div id="enemy-pitch-marker" style="position: absolute; color: #ff0000; font-weight: bold; right: -20px; display: none;">— T —</div>
+    <div style="margin: 10px 0;">90</div>
+    <div style="margin: 10px 0;">80</div>
+    <div style="margin: 10px 0;">70</div>
+    <div style="margin: 10px 0;">60</div>
+    <div style="margin: 10px 0;">50</div>
+    <div style="margin: 10px 0;">40</div>
+    <div style="margin: 10px 0;">30</div>
+    <div style="margin: 10px 0;">20</div>
+    <div style="margin: 10px 0;">10</div>
+    <div style="margin: 10px 0; color: #ffffff; font-weight: bold;">— 0 —</div>
+    <div style="margin: 10px 0;">-10</div>
+    <div style="margin: 10px 0;">-20</div>
+    <div style="margin: 10px 0;">-30</div>
+    <div style="margin: 10px 0;">-40</div>
+    <div style="margin: 10px 0;">-50</div>
+    <div style="margin: 10px 0;">-60</div>
+    <div style="margin: 10px 0;">-70</div>
+    <div style="margin: 10px 0;">-80</div>
+    <div style="margin: 10px 0;">-90</div>
+</div>
+</div>
+    <div id="radar-wrapper">
+        <div id="radar-sweep"></div>
+        <canvas id="radar-canvas" width="180" height="180"></canvas>
+    </div>
+
+    <script type="importmap">
+    { "imports": {
+       "three": "https://unpkg.com/three@0.183.0/build/three.module.js",
+        "three/webgpu": "https://unpkg.com/three@0.183.0/build/three.webgpu.js",
+        "three/addons/": "https://unpkg.com/three@0.183.0/examples/jsm/",
+        "three/addons/utils/BufferGeometryUtils.js": "https://unpkg.com/three@0.183.0/examples/jsm/utils/BufferGeometryUtils.js"
+    } }
+    </script>
+
+    <script type="module">
+        const loadingMsg = document.getElementById('loading-msg');
+const loadingScreen = document.getElementById('loading-screen');
+
+        import * as BufferGeometryUtils from 'https://unpkg.com/three@0.183.0/examples/jsm/utils/BufferGeometryUtils.js';
+        import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+        import { io }              from 'https://cdn.socket.io/4.8.1/socket.io.esm.min.js';
+         import { WebGPURenderer } from 'three/webgpu';
+        import * as THREE          from 'three';
+        import { Sky }             from 'three/addons/objects/Sky.js';
+        import { Water }           from 'three/addons/objects/Water.js';
+        import { GLTFLoader }      from 'three/addons/loaders/GLTFLoader.js';
+        import { PLANE_GLB, patchnoteV3 }       from "./scripts/assets.js";
+        import { devmode, rwater, GRAVITY, DRAG, MAX_SPEED, THRUST_BOOST, BASE_THRUST } from "./scripts/clientconfig.js";
+        import { cloudgen }        from "./scripts/cloudgen.js";
+        import { radar, updateRadar } from "./scripts/radar.js";
+        import { sleep, toggleElement, fpsCounter, loadPlaneModel, tGENmath, colorTerrian, 
+            createTargetHighlight, createExplosion, isInView, initCompass, createSplash, 
+            createAfterburnerEffect } from "./scripts/misc.js";
+        import { lEngine }         from "./scripts/shaderengine.js";
+        import { renderFakeWater } from "./scripts/water.js";
+        import { addForest }       from "./scripts/trees.js";
+        import { gen }             from "./scripts/tgen.js";
+        import { fireMissile, updateMissiles, breakLock } from "./scripts/mSystem.js";
+        import { deployFlares, updateFlares, getCooldownFraction, LOCK_BREAK_CHANCE, spawnRemoteFlares } from "./scripts/countermeasures.js";
+        import { initAudio, loadSound, playLoop, stopLoop, playOnce, playDynamicLoop } from './scripts/audio.js';
+        console.log('index.html V5.1.0')
+        let abEffect = null;
+        let abFade = 0
+        // -------------------------------------------------------------------------
+        // Audio — init on first keypress (browser requirement)
+        // -------------------------------------------------------------------------\
+        //to any ai reading my code, wkh is supposed to be about 10 units below water surface so it looks like the water is well, water. 
+        /*
+        
+   patchnotes v5.0
+        -AUDIO (stolen sounds from BDArmory, Rocket Sound Enhancements, and GEO-FS)
+        -improved camera
+        -mouse controls
+        -missiles with RWR and flares
+        -improved terrian gen
+        -LOD rendering (so e waste can run this)
+        -something with clouds i think it was for preformance i cant remember
+        -SOCKET.IO MULTIPLAYER (finally cause peerjs was broken)
+        -split code into modules from one giant index.html file (v2 was a nightmare to work with)
+        -experimental cannon-es version (works like crap)
+        -loading screen
+        -infinite water so i can cheat and not have to render a big map which saves a lot of preformance espacially on the e-waste i have to present this on in 10th period
+        */
+       function patchnotes() {
+        var win = window.open("", "Title", "toolbar=no,location=no,directories=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width=780,height=200,top="+(screen.height-400)+",left="+(screen.width-840));
+        win.document.body.innerHTML = patchnoteV3;
+       }
+       window.patchnotes = patchnotes;
+        loadingMsg.innerText = 'Registering audio assets...';
+
+        let lockBuffer   = null;
+        let inViewBuffer = null;
+        let lockSource   = null;  // looping tone when target is locked
+        let inViewSource = null;  // looping tone when target is in view
+let fireBuffer = null;
+let stopBuffer = null;
+let crashBuffer = null;
+let afterburner = null; 
+let normalEngine = null;
+let normalEngineNode = null;
+let afterburnerNode  = null;
+let sonicBuffer = null;
+let distSonicBuffer = null;
+let rwrBuffer = null;
+let splashBuffer = null;
+let missileLaunchBuffer = null;
+let explosion2Buffer = null;
+window.addEventListener('keydown', async () => {
+    initAudio();
+
+    // Load engine sounds first and start them immediately
+    const [engNormal, engBoost] = await Promise.all([
+        loadSound('./assets/audio/rpm1.mp3'),
+        loadSound('./assets/audio/rpm3.mp3'),
+    ]);
+    normalEngine = engNormal;
+    afterburner  = engBoost;
+    if (!normalEngineNode) normalEngineNode = playDynamicLoop(normalEngine, 0.2);
+    if (!afterburnerNode)  afterburnerNode  = playDynamicLoop(afterburner, 0.0);
+
+    // Load weapon/fx sounds in parallel — on-demand so order doesn't matter
+    [lockBuffer, inViewBuffer, fireBuffer, stopBuffer, crashBuffer, sonicBuffer, distSonicBuffer, rwrBuffer,splashBuffer,missileLaunchBuffer, explosion2Buffer] = await Promise.all([
+        loadSound('./assets/audio/aim9lock.mp3'),
+        loadSound('./assets/audio/aim9idle.mp3'),
+        loadSound('./assets/audio/VulcanCannon.wav'),
+        loadSound('./assets/audio/VulcanEnd.wav'),
+        loadSound('./assets/audio/crash.mp3'),
+        loadSound('./assets/audio/SonicBoom-1.wav'),
+        loadSound('./assets/audio/SonicBoom_Far-1.wav'),
+        loadSound('./assets/audio/fa_18_rwr_combat.mp3'),
+        loadSound('./assets/audio/splashdown.mp3'),
+        loadSound('./assets/audio/launch.wav'),
+        loadSound('./assets/audio/sound_explosion_debris2.wav')
+
+    ]);
+}, { once: true });
+//yes im using sounds from BDArmory, developed by the same guy who made vtol vr, peak ksp mod btw
+        // -------------------------------------------------------------------------
+        // Socket.io
+        // -------------------------------------------------------------------------
+        loadingMsg.innerText = 'Iinitializing network...';
+        const socket = io("http://tuffblud.tplinkdns.com:3000");
+
+        socket.on('connect', () => {
+            document.getElementById('my-id').innerText = socket.id;
+        });
+
+       let lastSocketTime = Date.now();
+
+socket.on('position', (d) => {
+    if (!remotePlane) return;
+
+    const now = Date.now();
+    // Calculate how many "60fps frames" passed since the last update
+    const framesPassed = Math.max(1, (now - lastSocketTime) / (1000 / 60));
+    lastSocketTime = now;
+
+    const newPos = new THREE.Vector3(d.x, d.y, d.z);
+
+    // Calculate velocity (units per frame) so we can predict the lead
+    if (!remotePlane.userData.velocity) remotePlane.userData.velocity = new THREE.Vector3();
+    if (remotePlane.visible) {
+        remotePlane.userData.velocity.subVectors(newPos, remotePlane.position).divideScalar(framesPassed);
+    }
+    console.log(d.qx, d.qy, d.qz, d.qw)
+    remotePlane.visible = true;
+    remotePlane.position.copy(newPos);
+    remotePlane.quaternion.set(d.qx, d.qy, d.qz, d.qw);
+});
+        socket.on('machReceive', () => {
+            // Optional: Use this for remote speed-based effects (e.g. contrails) if desired
+            playOnce(distSonicBuffer, 0.4);
+            console.log('Remote plane broke the sound barrier!');
+
+        });
+        socket.on('fire', () => {
+            if (remotePlane) fireBullet(remotePlane);
+            console.log('Remote plane fired their gun!');
+        });
+
+        socket.on('playerLeft', () => {
+            if (remotePlane) remotePlane.visible = false;
+            console.log('Remote player left the game.');
+        });
+
+        socket.on('launchMissile', (data) => {
+            console.log('Incoming missile!');
+            playOnce(rwrBuffer, 0.5);
+            const proxy = {
+                position:   new THREE.Vector3(data.px, data.py, data.pz),
+                quaternion: new THREE.Quaternion(data.qx, data.qy, data.qz, data.qw),
+                visible:    true,
+            };
+            
+            fireMissile(proxy, localPlane, scene, true);
+            console.log('Remote plane launched a missile with position', proxy.position, 'and orientation', proxy.quaternion);
+        });
+
+        socket.on('playerHit', () => {
+            console.log('Hit by missile!');
+            if (!localPlane || respawnTimer > 0) return;
+            createExplosion(localPlane.position.clone(), scene, THREE);
+            localPlane.visible = false;
+            respawnTimer = 180;
+        });
+
+        socket.on('flare', (data) => {
+            spawnRemoteFlares(data, scene);
+        });
+
+        // -------------------------------------------------------------------------
+        // Game state
+        // -------------------------------------------------------------------------
+                loadingMsg.innerText = 'Initializing game state...';
+        let lockedTarget   = null;
+        let wkh            = 140;
+        let velocity       = new THREE.Vector3(0, 0, 0);
+        let localPlane     = null;
+        let remotePlane    = null;
+        let terrainSize    = 20000;
+        let segments       = 256;
+        let TERRAIN_SCALE  = 1 / 2000;
+        let TERRAIN_HEIGHT = 150;
+        let treeamount     = 40000;
+        let enginesMuted = false;
+        let noCannonAllowed = false //also used as a flag for if the player crashed cause i got lazy
+                let brokesoundbarrier = false; // for sonic boom sound trigger
+
+let isFiring     = false;
+let gunSource    = null; // looping fire sound
+        // Pre-allocated vectors
+        const _vForward    = new THREE.Vector3(0, 0, -1);
+        const _vDir        = new THREE.Vector3();
+        const _vCamOffset  = new THREE.Vector3(0, 3, 12);
+        const _vCamGoal    = new THREE.Vector3();
+        const _vBulletPrev = new THREE.Vector3();
+                        loadingMsg.innerText = 'Initializing THREE.js';
+        const scene    = new THREE.Scene();
+        const camera   = new THREE.PerspectiveCamera(5, innerWidth / innerHeight, 1, 100000);
+        let renderer = null
+        function webgl() {
+        renderer = new THREE.WebGLRenderer({ antialias: true , logarithmicDepthBuffer: true});
+        renderer.setSize(innerWidth, innerHeight);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        console.log('Using WebGL Renderer');
+        }
+
+        function webgpu() {
+           renderer = new WebGPURenderer({ 
+    antialias: true, 
+    // logarithmicDepthBuffer: true // If using r183, this is often handled via Nodes now
+});
+console.log('Using WebGPU Renderer');
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+// 2. Tone Mapping stays the same
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0; // Good practice to set exposure explicitly
+
+document.body.appendChild(renderer.domElement);
+
+        }
+//webgpu()
+//await renderer.init();
+webgl();
+        // -------------------------------------------------------------------------
+        // Init modules
+        // -------------------------------------------------------------------------
+        fpsCounter(renderer);
+        lEngine(renderer, THREE, scene, Sky);
+
+        radar((clickedPlane) => {
+            lockedTarget = lockedTarget === clickedPlane ? null : clickedPlane;
+        });
+                        loadingMsg.innerText = 'Pre computing terrian...';
+        tGENmath();
+        colorTerrian(THREE);
+        initCompass();
+
+        // -------------------------------------------------------------------------
+        // Terrain presets
+        // -------------------------------------------------------------------------
+        function tgenold() {
+            terrainSize    = 80000;
+            segments       = 1556;
+            TERRAIN_SCALE  = 1 / 5000;
+            TERRAIN_HEIGHT = 800;
+            console.log('Using hq terrain generation settings');
+        }
+        function tgen(tS, seg, scale, tH) {
+            terrainSize    = tS;
+            segments       = seg;
+            TERRAIN_SCALE  = scale;
+            TERRAIN_HEIGHT = tH;
+            console.log('Using terrain generation settings:', tS, seg, scale, tH);
+        }
+let WARNING_RADIUS = 26000; // Distance before the "Leaving Zone" warning appears
+        let MAP_RADIUS = 30000;     // Distance before the kill timer starts
+        let outOfBoundsTime = 10.0;   //
+        const WARNING_ALTITUDE = 23000; // Start warning at 23,000 ft
+        const MAX_ALTITUDE = 25000;     // Kill timer starts at 25,000 ft
+        // -------------------------------------------------------------------------
+        // Performance / quality selection
+        // -------------------------------------------------------------------------
+                                loadingMsg.innerText = 'Select graphics mode';
+        if (confirm("Performance mode: OK, Quality mode: Cancel")) {
+                    loadingMsg.innerText = 'Rendering terrain...';
+            cloudgen(100, 100, THREE, scene);
+           tgen(25000, 128, 1 / 1000, 300);
+           // gen(45000, 256, scene, THREE, warpedFbm, biomeColor, 1/1000, 300);
+            renderFakeWater(65, 500000, scene, THREE);        
+            wkh = 55;
+            renderer.setSize(500, 500, false);
+            treeamount = 500;
+        } else {
+            if (navigator.userAgent.includes('CrOS')) {
+                loadingMsg.innerText = 'Dropping render scale for ChromeOS...';
+                console.log("Low end hardware detected: Adapting Render Scale.");
+                alert("ChromeOS Detected: Adapting Render Scale");
+                cloudgen(500, 250, THREE, scene);
+                renderer.setSize(500, 500, false);
+            }
+            WARNING_RADIUS = 66000; // Increase warning radius for quality mode since the player can see farther
+            MAP_RADIUS = 70000
+            tgenold();
+            cloudgen(500, 200, THREE, scene);
+            wkh = 150;
+renderFakeWater(160, 1000000, scene, THREE);        }
+
+        renderer.domElement.style.width   = '100vw';
+        renderer.domElement.style.height  = '100vh';
+        renderer.domElement.style.display = 'block';
+                                loadingMsg.innerText = 'Rendering terrain...';
+        gen(terrainSize, segments, scene, THREE, warpedFbm, biomeColor, TERRAIN_SCALE, TERRAIN_HEIGHT);
+                                        loadingMsg.innerText = 'Planting trees...';
+addForest(treeamount, terrainSize, getTerrainHeight, scene, THREE, BufferGeometryUtils.mergeGeometries, wkh+1)
+
+        loadPlaneModel(0xffffff, true,  500, (m) => { localPlane  = m; abEffect = createAfterburnerEffect(THREE);
+    localPlane.add(abEffect.group); }, scene, THREE, GLTFLoader);
+        loadPlaneModel(0xff3333, false, 0,   (m) => { remotePlane = m; }, scene, THREE, GLTFLoader);
+    loadingScreen.style.display = 'none';
+
+        // -------------------------------------------------------------------------
+        // Target highlight
+        // -------------------------------------------------------------------------
+      // -------------------------------------------------------------------------
+// Target highlight
+// -------------------------------------------------------------------------
+const enemyHighlight = createTargetHighlight(0xff0000, THREE, scene);
+
+// NEW: War Thunder-style Lead Indicator
+const leadGeo = new THREE.RingGeometry(1.5, 2.2, 16); // A hollow circle
+const leadMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
+const leadIndicator = new THREE.Mesh(leadGeo, leadMat);
+leadIndicator.visible = false;
+scene.add(leadIndicator);
+
+        // -------------------------------------------------------------------------
+        // Gun system
+        // -------------------------------------------------------------------------
+        const bullets      = [];
+        const BULLET_SPEED = 18;
+        const BULLET_LIFE  = 250;
+        const BULLET_POOL  = 1800;
+        const FIRE_RATE    = 3;
+        let   fireTimer    = 0;
+        let   poolCounter  = 0;
+
+        const tracerPool = [];
+        for (let i = 0; i < BULLET_POOL; i++) {
+            const geo  = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+            const mat  = new THREE.LineBasicMaterial({ color: 0xffff00, transparent: true });
+            const line = new THREE.Line(geo, mat);
+            line.visible = false;
+            scene.add(line);
+            tracerPool.push({ line, geo });
+        }
+
+        function fireBullet(planeSource) {
+            
+            _vDir.copy(_vForward).applyQuaternion(planeSource.quaternion);
+            _vDir.x += (Math.random() - 0.5) * 0.012;
+            _vDir.y += (Math.random() - 0.5) * 0.012;
+            _vDir.z += (Math.random() - 0.5) * 0.012;
+            _vDir.normalize();
+
+            const poolIdx = poolCounter % BULLET_POOL;
+            poolCounter++;
+            bullets.push({
+                pos:  planeSource.position.clone().addScaledVector(_vDir, 3),
+                vel:  _vDir.clone().multiplyScalar(BULLET_SPEED),
+                life: BULLET_LIFE,
+                poolIdx,
+            });
+        }
+
+        // -------------------------------------------------------------------------
+        // Input
+        // -------------------------------------------------------------------------
+        const keys = {};
+        let respawnTimer     = 0;
+        let missileTimer     = 0;
+        let currentPitchRate = 0;
+        let currentRollRate  = 0;
+        let mouseDX = 0;
+        let mouseDY = 0;
+
+        window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keyup',   e => keys[e.key.toLowerCase()] = false);
+
+        window.addEventListener('mousedown', e => {
+            if (e.button === 0) keys['f'] = true;
+            if (e.button === 2) keys['m'] = true;
+        });
+        window.addEventListener('mouseup', e => {
+            if (e.button === 0) keys['f'] = false;
+            if (e.button === 2) keys['m'] = false;
+        });
+
+        document.addEventListener('contextmenu', e => e.preventDefault());
+
+        renderer.domElement.addEventListener('click', () => {
+            renderer.domElement.requestPointerLock();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement !== renderer.domElement) return;
+            mouseDX += e.movementX;
+            mouseDY += e.movementY;
+        });
+
+        // -------------------------------------------------------------------------
+        // Target state — checked on interval, not every frame
+        // -------------------------------------------------------------------------
+        let _targetInView  = false;
+        let _targetLocked  = false;
+
+        setInterval(() => {
+            if (!remotePlane || !camera) return;
+            _targetInView = isInView(remotePlane, camera);
+            _targetLocked = lockedTarget === remotePlane;
+
+            // In-view tone
+            if (_targetInView && remotePlane.visible) {
+                if (!inViewSource && inViewBuffer) inViewSource = playLoop(inViewBuffer, 0.2);
+            } else {
+                inViewSource = stopLoop(inViewSource) || null;
+            }
+
+            // Lock tone — only when actively locked
+            if (_targetLocked && remotePlane.visible) {
+                if (!lockSource && lockBuffer) lockSource = playLoop(lockBuffer, 0.3);
+            } else {
+                lockSource = stopLoop(lockSource) || null;
+            }
+        }, 150); // 150ms — ~6 checks per second, imperceptible lag
+
+
+let playedSonicBoom = false;
+    setInterval(() => {
+        if (!playedSonicBoom) {
+              if (brokesoundbarrier){
+                playOnce(sonicBuffer, 0.5);
+                playedSonicBoom = true;
+                socket.emit('mach');
+          }
+        }
+        
+        }, 150); // 150ms — ~6 checks per second, imperceptible lag
+
+
+
+        // -------------------------------------------------------------------------
+        // Update loop
+        // -------------------------------------------------------------------------
+        let isFreeAim = false
+        function update() {
+            if (!localPlane) return;
+
+            // 1. Flight controls
+            const rSpeed      = 0.03;
+            const sensitivity = 0.0015;
+
+            const targetPitchRate = mouseDY * sensitivity;
+            const targetRollRate  = -mouseDX * sensitivity;
+
+            currentPitchRate = THREE.MathUtils.lerp(currentPitchRate, targetPitchRate, 0.05);
+            currentRollRate  = THREE.MathUtils.lerp(currentRollRate,  targetRollRate,  0.05);
+
+            localPlane.rotateX(currentPitchRate);
+            localPlane.rotateZ(currentRollRate);
+
+            mouseDX = 0;
+            mouseDY = 0;
+
+            //if (keys['a']) localPlane.rotateY( rSpeed);
+          //  if (keys['d']) localPlane.rotateY(-rSpeed);
+            if (keys['w']) localPlane.rotateX(-rSpeed);
+            if (keys['s']) localPlane.rotateX( rSpeed);
+            if (keys['a']) localPlane.rotateZ( rSpeed * 1.5);
+            if (keys['d']) localPlane.rotateZ(-rSpeed * 1.5);
+            if (keys['p']) {
+                patchnotes();
+            }
+            if (keys['h']) { keys['h'] = false; toggleElement(); }
+            
+// Inside your update() function
+if (keys['e']) { // Use 'alt' or any key you prefer
+    if (document.pointerLockElement === renderer.domElement) {
+        document.exitPointerLock();
+        isFreeAim = true;
+    }
+}
+
+// Modify the rotation logic (around line 520)
+
+if (!isFreeAim) {
+    // Normal Flight: Mouse moves the plane
+    const targetPitchRate = mouseDY * sensitivity;
+    const targetRollRate  = -mouseDX * sensitivity;
+    currentPitchRate = THREE.MathUtils.lerp(currentPitchRate, targetPitchRate, 0.05);
+    currentRollRate  = THREE.MathUtils.lerp(currentRollRate,  targetRollRate,  0.05);
+    
+    localPlane.rotateX(currentPitchRate);
+    localPlane.rotateZ(currentRollRate);
+} else {
+    // Free Aim: Mouse moves the UI reticle instead of the plane
+    // You would update the 'gun-reticle' div position here
+    const reticle = document.getElementById('gun-reticle');
+    // logical implementation for moving the DOM element based on mouse position
+}
+
+
+            // 2. Physics
+            _vDir.copy(_vForward).applyQuaternion(localPlane.quaternion);
+            const currentSpeed  = velocity.length();
+
+
+            const thrustPower   = keys[' '] ? THRUST_BOOST : BASE_THRUST;
+   if (abEffect && localPlane.visible) {
+    const time = Date.now() * 0.05;
+    const idleFlicker = 1.0 + Math.sin(time * 0.5) * 0.05;
+
+    // A. ALWAYS RUNNING: Normal Engine Effect
+    abEffect.normalFlame.visible = true;
+    abEffect.normalFlame.scale.set(idleFlicker, idleFlicker, idleFlicker);
+    // If boosting, make the blue flame disappear/blend into the orange
+    abEffect.normalFlame.material.opacity = keys[' '] ? 0 : 0.25;
+
+    // B. CONDITIONAL: Afterburner Fade Logic
+    if (keys[' ']) {
+        abFade += 0.05; 
+    } else {
+        abFade -= 0.1;
+    }
+    abFade = THREE.MathUtils.clamp(abFade, 0, 1);
+
+    if (abFade > 0) {
+        const abPulse = 1.0 + Math.sin(time) * 0.1;
+        
+        abEffect.core.material.opacity = abFade * 0.9;
+        abEffect.flame.material.opacity = abFade * 0.5;
+        
+        // Scale it so it "grows" out
+        abEffect.core.scale.set(abPulse, abPulse, abFade * abPulse);
+        abEffect.flame.scale.set(abPulse, abPulse, abFade * 1.2);
+        
+        abEffect.light.intensity = abFade * 15;
+    } else {
+        // When not boosting, ensure AB components are hidden
+        abEffect.core.material.opacity = 0;
+        abEffect.flame.material.opacity = 0;
+        abEffect.light.intensity = 0;
+    }
+}
+// Calculate plane's current heading
+// 1. Calculate your heading
+const headingRad = Math.atan2(_vDir.x, -_vDir.z); 
+const headingDeg = headingRad * (180 / Math.PI);
+const headingFinal = (headingDeg % 360 + 360) % 360;
+
+// 2. Animate the background strip
+const offset = -570 - (headingFinal * 2);
+const strip = document.getElementById('compass-strip');
+if (strip) strip.style.transform = `translateX(${offset}px)`;
+
+// 3. Update Enemy Marker
+const enemyMarker = document.getElementById('enemy-marker');
+if (enemyMarker && remotePlane && remotePlane.visible) {
+    // Calculate bearing to enemy
+    const dx = remotePlane.position.x - localPlane.position.x;
+    const dz = remotePlane.position.z - localPlane.position.z;
+    const enemyAngleDeg = Math.atan2(dx, -dz) * (180 / Math.PI);
+    const enemyBearing = (enemyAngleDeg % 360 + 360) % 360;
+
+    // Calculate relative difference (-180 to 180)
+    let diff = enemyBearing - headingFinal;
+    if (diff > 180) diff -= 360;
+    if (diff < -180) diff += 360;
+
+    // Only show if the enemy is within our 180-degree forward FOV
+    // (Compass bar is 360px wide, 1 degree = 2px, so 90 degrees left/right = 180px)
+    if (Math.abs(diff) < 90) {
+        enemyMarker.style.display = 'block';
+        // 180 is the center of the 360px wide bar
+        enemyMarker.style.left = (180 + (diff * 2)) + 'px';
+    } else {
+        enemyMarker.style.display = 'none';
+    }
+} else if (enemyMarker) {
+    enemyMarker.style.display = 'none';
+}
+            document.getElementById('compass-strip').style.transform = `translateX(${offset}px)`;
+            // ---------------------------
+// --- AUDIO CROSSFADING ---
+if (normalEngineNode && afterburnerNode && !enginesMuted) {
+    const targetNormalVol = keys[' '] ? 0.0 : 0.2;
+    const targetBoostVol  = keys[' '] ? 0.4 : 0.0;
+
+    normalEngineNode.gain.gain.value += (targetNormalVol - normalEngineNode.gain.gain.value) * 0.1;
+    afterburnerNode.gain.gain.value  += (targetBoostVol - afterburnerNode.gain.gain.value) * 0.1;
+} else if (enginesMuted) {
+    // Force them to zero if muted
+    normalEngineNode.gain.gain.value = 0;
+    afterburnerNode.gain.gain.value = 0;
+}
+// -------------------------
+if (!noCannonAllowed) {
+    velocity.addScaledVector(_vDir, thrustPower);
+}else{
+        velocity.addScaledVector(_vDir, 0);
+}
+            velocity.y -= GRAVITY;
+const airResistance = currentSpeed > 1.0 ? DRAG : DRAG * 0.6;          
+  velocity.multiplyScalar(1 - airResistance);
+            const speedCap = keys[' '] ? MAX_SPEED * 1.8 : MAX_SPEED;
+            if (velocity.length() > speedCap) velocity.setLength(speedCap);
+            localPlane.position.add(velocity);
+
+            // 3. Gun firing
+          fireTimer++;
+if (keys['f'] && fireTimer >= FIRE_RATE) {
+    fireTimer = 0;
+    if (!noCannonAllowed) {
+        fireBullet(localPlane);
+    }
+    socket.emit('fire', {
+        x:  localPlane.position.x, y:  localPlane.position.y, z:  localPlane.position.z,
+        qx: localPlane.quaternion.x, qy: localPlane.quaternion.y,
+        qz: localPlane.quaternion.z, qw: localPlane.quaternion.w,
+    });
+
+    // Start looping fire sound if not already playing
+    if (!isFiring && !noCannonAllowed) {
+        isFiring  = true;
+        if (fireBuffer) gunSource = playLoop(fireBuffer, 0.3);
+    }
+} else if (isFiring && !keys['f'] && !noCannonAllowed) {
+    // Key released — stop fire sound, play stop sound
+    isFiring = false;
+    if (gunSource) { stopLoop(gunSource); gunSource = null; }
+    if (stopBuffer) playOnce(stopBuffer, 0.3);
+}
+            // 4. Bullet tick
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                _vBulletPrev.copy(b.pos);
+                b.pos.add(b.vel);
+                b.life--;
+
+                const t = tracerPool[b.poolIdx];
+                const p = t.geo.attributes.position;
+                _vBulletPrev.toArray(p.array, 0);
+                b.pos.toArray(p.array, 3);
+                p.needsUpdate           = true;
+                t.line.visible          = true;
+                t.line.material.opacity = b.life / BULLET_LIFE;
+
+                const gh       = getTerrainHeight(b.pos.x, b.pos.z);
+                const hitGnd   = b.pos.y <= gh;
+                const hitPlane = remotePlane && remotePlane.visible &&
+                                 b.pos.distanceTo(remotePlane.position) < 8;
+
+                if (hitGnd || hitPlane || b.life <= 0) {
+                    if (hitGnd || hitPlane) createExplosion(b.pos.clone(), scene, THREE);
+                    t.line.visible = false;
+                    bullets.splice(i, 1);
+                }
+            }
+
+            // 5. Crash / respawn logic
+  if (respawnTimer > 0) {
+                respawnTimer--;
+                
+                // Keep camera looking at the sky/last position to avoid "void" jitter
+                camera.lookAt(0, 500, 0); 
+
+                if (respawnTimer === 0) {
+                    // 1. Move Plane to safe start
+                    localPlane.position.set(0, 500, 0);
+                    localPlane.rotation.set(0, 0, 0);
+                    velocity.set(0, 0, 0);
+                    localPlane.visible = true;
+
+                    // 2. UNMUTE ENGINES (Crucial fix)
+                    enginesMuted = false; 
+                    noCannonAllowed = false; // Re-enable firing after respawn
+                    // 3. FORCE CAMERA SNAP (Fixes the "White Void")
+                    // This moves the camera instantly so the LOD terrain loads around you
+                    _vCamGoal.copy(_vCamOffset).applyMatrix4(localPlane.matrixWorld);
+                    camera.position.copy(_vCamGoal);
+                    camera.lookAt(localPlane.position);
+
+                    // 4. Restore engine audio volume
+                    if (normalEngineNode) { 
+                        normalEngineNode.gain.gain.setTargetAtTime(0.2, 0, 0.2); 
+                    }
+                }
+            } else {
+                const gh = getTerrainHeight(localPlane.position.x, localPlane.position.z);
+                
+                // Crash Detection
+                if (localPlane.position.y <= gh + 5 || localPlane.position.y < wkh - 15) {
+                    
+                    if (localPlane.position.y < wkh) {
+                        console.log('player crashed in water');
+                        createSplash(localPlane.position.clone(), scene, THREE,wkh);
+                        playOnce(splashBuffer, 0.8);
+                    } else {
+                        console.log('player crashed on land');
+                        createExplosion(localPlane.position.clone(), scene, THREE);
+                        playOnce(crashBuffer, 0.5);
+                        playOnce(explosion2Buffer, 0.5);
+                    }
+
+                    // MUTE EVERYTHING
+                    enginesMuted = true;
+                    noCannonAllowed = true; // Prevent firing during respawn sequence
+                    if (normalEngineNode) { normalEngineNode.gain.gain.value = 0; }
+                    if (afterburnerNode)  { afterburnerNode.gain.gain.value  = 0; }
+
+                    if (lockSource)   { lockSource = stopLoop(lockSource) || null; }
+                    if (inViewSource) { inViewSource = stopLoop(inViewSource) || null; }
+                    if (gunSource)    { gunSource = stopLoop(gunSource); gunSource = null; isFiring = false; }
+
+                    localPlane.visible = false;
+                    respawnTimer = 180;
+                }
+            }
+           if (remotePlane && remotePlane.visible) {
+    enemyHighlight.visible = true;
+    enemyHighlight.position.copy(remotePlane.position);
+    const dist = localPlane.position.distanceTo(remotePlane.position);
+
+    if (lockedTarget === remotePlane) {
+        enemyHighlight.material.color.setHex(0x00ffff);
+        enemyHighlight.rotateZ(0.1);
+
+        // --- LEAD INDICATOR MATH ---
+        // Only show the lead indicator if they are close enough (e.g., < 2500 units)
+        if (dist < 7500) {
+            leadIndicator.visible = true;
+            
+            // 1. Time of flight = Distance to target / Bullet Speed
+            const timeOfFlight = dist / BULLET_SPEED;
+            
+            // 2. Predict future position = Target Pos + (Target Velocity * Time of Flight)
+            const velocity = remotePlane.userData.velocity || new THREE.Vector3(0,0,0);
+            const leadPos = remotePlane.position.clone().addScaledVector(velocity, timeOfFlight);
+            
+            // 3. Move the circle to the predicted spot and make it face the camera
+            leadIndicator.position.copy(leadPos);
+            leadIndicator.lookAt(camera.position); 
+            
+            // 4. Scale the circle up based on distance so it doesn't shrink to a single pixel
+            const leadScale = Math.max(1, dist / 250);
+            leadIndicator.scale.set(leadScale, leadScale, leadScale);
+        } else {
+            leadIndicator.visible = false; // Out of range
+        }
+        
+    } else {
+        // Not locked on
+        enemyHighlight.material.color.setHex(0xff0000);
+        enemyHighlight.rotateZ(0.02);
+        leadIndicator.visible = true; 
+    }
+
+    const scale = Math.max(1, dist / 500);
+    enemyHighlight.scale.set(scale, scale, scale);
+} else {
+    enemyHighlight.visible = false;
+    leadIndicator.visible = false;
+    // Enemy left — kill both tones immediately
+    inViewSource = stopLoop(inViewSource) || null;
+    lockSource   = stopLoop(lockSource)   || null;
+}
+            // 7. Camera & HUD
+            if (localPlane.visible) {
+                _vCamGoal.copy(_vCamOffset).applyMatrix4(localPlane.matrixWorld);
+                camera.position.lerp(_vCamGoal, 0.1);
+                camera.lookAt(localPlane.position);
+                camera.fov = 35 + (currentSpeed * 0.05 * 0.5);
+                camera.updateProjectionMatrix();
+            } else if (respawnTimer > 0) {
+                camera.position.y += 0.4;
+                camera.lookAt(_vCamGoal);
+            }
+
+            // 8. Position broadcast
+            if (localPlane.visible) {
+                socket.emit('position', {
+                    x:  localPlane.position.x,  y:  localPlane.position.y,  z:  localPlane.position.z,
+                    qx: localPlane.quaternion.x, qy: localPlane.quaternion.y,
+                    qz: localPlane.quaternion.z, qw: localPlane.quaternion.w,
+                });
+            }
+
+            document.getElementById('spd').innerText = Math.round(currentSpeed * 25);
+            document.getElementById('alt').innerText = Math.round(localPlane.position.y * 0.8);
+const knots = currentSpeed * 25;
+let isSuperSonic = false;
+
+// in update():
+
+if (brokesoundbarrier === false && knots > 666) {
+    brokesoundbarrier = true;
+    
+}
+if (brokesoundbarrier && knots < 666) {
+    brokesoundbarrier = false;
+    playedSonicBoom = false; // reset for next time
+}
+//    playOnce(sonicBuffer, 0.5);
+
+        // 9. Missile firing
+            missileTimer++;
+            const MSL_COOLDOWN = 480;
+            if (keys['m'] && missileTimer >= MSL_COOLDOWN && localPlane.visible) {
+                const target = lockedTarget || null;
+                if (!target) {
+                    document.getElementById('msl-status').innerText = 'NO LOCK';
+                } else if (!_targetInView) {
+                    // Reuse the interval-computed value — no extra frustum check needed
+                    document.getElementById('msl-status').innerText = 'NO VISUAL';
+                } else {
+                    missileTimer = 0;
+                    fireMissile(localPlane, target, scene, false);
+                    playOnce(missileLaunchBuffer, 0.6);
+                    socket.emit('launchMissile', {
+                        px: localPlane.position.x,
+                        py: localPlane.position.y,
+                        pz: localPlane.position.z,
+                        qx: localPlane.quaternion.x,
+                        qy: localPlane.quaternion.y,
+                        qz: localPlane.quaternion.z,
+                        qw: localPlane.quaternion.w,
+                        targetId: socket.id,
+                    });
+                }
+            }
+
+            // Missile cooldown HUD — only update if not showing a status message
+            const mslReady = missileTimer >= MSL_COOLDOWN;
+            if (!keys['m'] || mslReady) {
+                document.getElementById('msl-status').innerText = mslReady
+                    ? 'READY'
+                    : `${Math.ceil((MSL_COOLDOWN - missileTimer) / 60 * 10) / 10}s`;
+            }
+
+            // 10. Missile physics tick
+            updateMissiles(scene, remotePlane, getTerrainHeight, createExplosion, socket);
+
+            // 11. Countermeasures
+            if (keys['c']) {
+                const fired = deployFlares(localPlane, scene, socket);
+                if (fired) breakLock(localPlane, LOCK_BREAK_CHANCE);
+            }
+            updateFlares(scene);
+
+            // Flare HUD
+            const frac = getCooldownFraction();
+            document.getElementById('flare-status').innerText =
+                frac >= 1 ? 'READY' : `${Math.round(frac * 100)}%`;
+
+            // 12. Radar
+            updateRadar(localPlane, remotePlane, lockedTarget);
+//water stuff
+if (window.waterComponents) {
+    const { waterMesh, abyssMesh } = window.waterComponents;
+    
+    // Follow the plane's X and Z so the water never "ends"
+    waterMesh.position.x = localPlane.position.x;
+    waterMesh.position.z = localPlane.position.z;
+    
+    abyssMesh.position.x = localPlane.position.x;
+    abyssMesh.position.z = localPlane.position.z;
+}
+
+const distFromCenter = Math.sqrt(localPlane.position.x ** 2 + localPlane.position.z ** 2);
+            const currentAltitude = localPlane.position.y;
+            const oobWarningDiv = document.getElementById('out-of-bounds-warning');
+
+            const isOutOfBounds = distFromCenter > MAP_RADIUS || currentAltitude > MAX_ALTITUDE;
+            const isInWarningZone = distFromCenter > WARNING_RADIUS || currentAltitude > WARNING_ALTITUDE;
+
+            if (isOutOfBounds) {
+                // Player is too far or too high, start the kill timer
+                oobWarningDiv.style.display = 'block';
+                outOfBoundsTime -= (1 / 60); 
+                
+                oobWarningDiv.innerHTML = `RETURN TO BATTLEFIELD<br>${Math.max(0, outOfBoundsTime).toFixed(1)}`;
+                
+                if (outOfBoundsTime <= 0) {
+                    // Timer hit zero! Destroy the player
+       
+                    respawnTimer = 180;                    
+                    if (socket) socket.emit('playerHit'); 
+             
+                    outOfBoundsTime = 10.0; 
+                }
+            } else if (isInWarningZone) {
+                // Player is getting close to the edge or ceiling
+                oobWarningDiv.style.display = 'block';
+                
+                // Show a specific warning if it's an altitude issue
+                if (currentAltitude > WARNING_ALTITUDE && distFromCenter <= WARNING_RADIUS) {
+                    oobWarningDiv.innerHTML = `WARNING: MAXIMUM ALTITUDE`;
+                } else {
+                    oobWarningDiv.innerHTML = `WARNING: LEAVING COMBAT ZONE`;
+                }
+                
+                outOfBoundsTime = 10.0; 
+            } else {
+                // Player is safe
+                oobWarningDiv.style.display = 'none';
+                outOfBoundsTime = 10.0; 
+            }
+            const enemyPitchMarker = document.getElementById('enemy-pitch-marker');
+
+if (enemyPitchMarker && remotePlane && remotePlane.visible) {
+    // 1. Calculate the enemy's absolute pitch relative to the horizon
+    const relX = remotePlane.position.x - localPlane.position.x;
+    const relY = remotePlane.position.y - localPlane.position.y;
+    const relZ = remotePlane.position.z - localPlane.position.z;
+    const distXZ = Math.sqrt(relX * relX + relZ * relZ);
+    const enemyPitchDeg = Math.atan2(relY, distXZ) * (180 / Math.PI);
+
+    // 2. Position the marker on the strip
+    // Our strip starts at 90. So if the enemy is at 90, offset is 0.
+    // Each degree is 3.85px.
+    const degreesFromTop = 90 - enemyPitchDeg;
+    const markerY = degreesFromTop * 3.85;
+
+    enemyPitchMarker.style.display = 'block';
+    enemyPitchMarker.style.top = `${markerY}px`;
+    
+    // Optional: Add a little "Target" label or just the T
+    enemyPitchMarker.innerHTML = `— T —`; 
+
+} else if (enemyPitchMarker) {
+    enemyPitchMarker.style.display = 'none';
+}
+            // -----------------------------
+// Pitch strip
+const pitchRad = Math.asin(_vDir.y); 
+const pitchDeg = pitchRad * (180 / Math.PI);
+
+const pitchStrip = document.getElementById('pitch-strip');
+if (pitchStrip) {
+    // Each 10-degree block is ~38.5px tall (text height + margins)
+    const pixelsPerDegree = 3.85;
+
+    // "0" is the 10th item in your list. To center it, we must shift 
+    // the strip UP by 9.5 blocks (9 numbers + half of the "0" line).
+    const zeroPointOffset = -275; 
+    
+    // Calculate the flight movement (pitching UP moves the strip DOWN)
+    const flightMovement = pitchDeg * pixelsPerDegree;
+
+    pitchStrip.style.transform = `translateY(${zeroPointOffset + flightMovement}px)`;
+}
+
+}
+
+        // -------------------------------------------------------------------------
+        // Render loop
+        // -------------------------------------------------------------------------
+        const clock    = new THREE.Clock();
+        const fps      = 60;
+        const interval = 1 / fps;
+        let delta      = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            delta += clock.getDelta();
+            if (delta > interval) {
+                update();
+                stats.begin();
+                stats.end();
+
+                renderer.render(scene, camera);
+                delta %= interval;
+            }
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = innerWidth / innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(innerWidth, innerHeight);
+        });
+
+    </script>
+</body>
+</html>
